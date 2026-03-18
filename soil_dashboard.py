@@ -106,6 +106,7 @@ def mqtt_thread():
 # Dash app
 # -----------------------------
 app = Dash(__name__)
+server = app.server
 app.title = "Soil Monitor Dashboard"
 
 plant_names = list(TOPIC_TO_PLANT.values())
