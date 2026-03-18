@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
-from dash import Dash, html, dcc, Input, Output
+from dash import Dash, html, dcc, Input, Output, State, ALL, no_update
 import plotly.graph_objects as go
 
 # -----------------------------
@@ -51,14 +51,10 @@ if not DISCORD_WEBHOOK_URL:
     print("Warning: DISCORD_WEBHOOK_URL not set — Discord notifications disabled", flush=True)
 
 # -----------------------------
-# Plant-specific watering rules
+# Default plant rules
 # -----------------------------
-PLANT_RULES = {
-    "Amy Dieffenbachia": {"dry": 30, "ideal_low": 35, "ideal_high": 60},
-    "Peace Lily": {"dry": 35, "ideal_low": 40, "ideal_high": 65},
-    "Periwinkle": {"dry": 25, "ideal_low": 30, "ideal_high": 55},
-    "Rex Begonia": {"dry": 40, "ideal_low": 45, "ideal_high": 70},
-}
+DEFAULT_RULE = {"dry": 20, "ideal_low": 35, "ideal_high": 80}
+DEFAULT_PLANT_RULES = {plant: DEFAULT_RULE.copy() for plant in FEEDS}
 
 # -----------------------------
 # Helpers
@@ -120,11 +116,11 @@ def downsample_data(times, values, step=5):
     return times[::step], values[::step]
 
 
-def get_watering_recommendation(plant, moisture):
+def get_watering_recommendation(plant, moisture, rules_dict):
     if moisture is None:
         return "No data", "#666666", "#f4f4f4"
 
-    rules = PLANT_RULES[plant]
+    rules = rules_dict[plant]
 
     if moisture < rules["dry"]:
         return "Water now", "#d9534f", "#fff1f0"
@@ -214,7 +210,6 @@ def maybe_send_daily_summary(latest_snapshot):
     now_local = datetime.now(LOCAL_TZ)
     today = now_local.date()
 
-    # send once per day after 6:00 PM local time
     if now_local.hour < 18:
         return
 
@@ -248,8 +243,8 @@ def maybe_send_daily_summary(latest_snapshot):
     last_daily_summary_date = today
 
 
-def add_ideal_band(fig, plant):
-    rules = PLANT_RULES[plant]
+def add_ideal_band(fig, plant, rules_dict):
+    rules = rules_dict[plant]
     fig.add_hrect(
         y0=rules["ideal_low"],
         y1=rules["ideal_high"],
@@ -272,10 +267,103 @@ def make_card(plant):
         },
     )
 
+
+def build_settings_panel(rules_dict):
+    children = [
+        html.H3("Plant Threshold Settings"),
+        html.P("These settings are stored in this browser."),
+    ]
+
+    for plant in FEEDS:
+        plant_rules = rules_dict.get(plant, DEFAULT_RULE)
+
+        children.append(
+            html.Div(
+                [
+                    html.H4(plant),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Label("Dry threshold"),
+                                    dcc.Input(
+                                        id={"type": "dry-input", "plant": plant},
+                                        type="number",
+                                        value=plant_rules["dry"],
+                                        min=0,
+                                        max=100,
+                                        step=1,
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Ideal low"),
+                                    dcc.Input(
+                                        id={"type": "ideal-low-input", "plant": plant},
+                                        type="number",
+                                        value=plant_rules["ideal_low"],
+                                        min=0,
+                                        max=100,
+                                        step=1,
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Ideal high"),
+                                    dcc.Input(
+                                        id={"type": "ideal-high-input", "plant": plant},
+                                        type="number",
+                                        value=plant_rules["ideal_high"],
+                                        min=0,
+                                        max=100,
+                                        step=1,
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"flex": "1"},
+                            ),
+                        ],
+                        style={"display": "flex", "gap": "12px", "marginBottom": "10px"},
+                    ),
+                    html.Hr(),
+                ],
+                style={
+                    "backgroundColor": "#ffffff",
+                    "padding": "14px",
+                    "borderRadius": "10px",
+                    "marginBottom": "12px",
+                    "border": "1px solid #ddd",
+                },
+            )
+        )
+
+    children.append(
+        html.Button(
+            "Save Rules",
+            id="save-rules-button",
+            n_clicks=0,
+            style={
+                "padding": "10px 16px",
+                "borderRadius": "8px",
+                "border": "1px solid #888",
+                "cursor": "pointer",
+            },
+        )
+    )
+    children.append(html.Div(id="save-rules-status", style={"marginTop": "10px"}))
+
+    return html.Div(children)
+
 # -----------------------------
 # Figure builders
 # -----------------------------
-def build_live_figures(session):
+def build_live_figures(session, rules_dict):
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
 
@@ -294,7 +382,7 @@ def build_live_figures(session):
                 )
 
                 if not added_band:
-                    add_ideal_band(moisture_fig, plant)
+                    add_ideal_band(moisture_fig, plant, rules_dict)
                     added_band = True
 
         except Exception as e:
@@ -319,7 +407,7 @@ def build_live_figures(session):
     return moisture_fig, temp_fig
 
 
-def build_weekly_figures(session):
+def build_weekly_figures(session, rules_dict):
     weekly_moisture_fig = go.Figure()
     weekly_temp_fig = go.Figure()
 
@@ -336,7 +424,7 @@ def build_weekly_figures(session):
                     go.Scatter(x=times_m, y=moisture_vals, mode="lines", name=plant)
                 )
                 if not added_band:
-                    add_ideal_band(weekly_moisture_fig, plant)
+                    add_ideal_band(weekly_moisture_fig, plant, rules_dict)
                     added_band = True
 
             if times_t:
@@ -366,7 +454,7 @@ def build_weekly_figures(session):
     return weekly_moisture_fig, weekly_temp_fig
 
 
-def build_monthly_figures(session):
+def build_monthly_figures(session, rules_dict):
     monthly_moisture_fig = go.Figure()
     monthly_temp_fig = go.Figure()
 
@@ -383,7 +471,7 @@ def build_monthly_figures(session):
                     go.Scatter(x=times_m, y=moisture_vals, mode="lines", name=plant)
                 )
                 if not added_band:
-                    add_ideal_band(monthly_moisture_fig, plant)
+                    add_ideal_band(monthly_moisture_fig, plant, rules_dict)
                     added_band = True
 
             if times_t:
@@ -424,6 +512,12 @@ plant_names = list(FEEDS.keys())
 app.layout = html.Div(
     style={"fontFamily": "Arial, sans-serif", "padding": "20px", "backgroundColor": "#f7f7f7"},
     children=[
+        dcc.Store(
+            id="plant-rules-store",
+            storage_type="local",
+            data=DEFAULT_PLANT_RULES,
+        ),
+
         html.H1("Plant Soil Monitor"),
         html.Div(id="system-status"),
         html.Div(id="alert-banner"),
@@ -442,6 +536,7 @@ app.layout = html.Div(
                 dcc.Tab(label="Live", value="live"),
                 dcc.Tab(label="Weekly", value="weekly"),
                 dcc.Tab(label="Monthly", value="monthly"),
+                dcc.Tab(label="Settings", value="settings"),
             ],
         ),
 
@@ -451,11 +546,49 @@ app.layout = html.Div(
 
 
 @app.callback(
+    Output("plant-rules-store", "data"),
+    Output("save-rules-status", "children"),
+    Input("save-rules-button", "n_clicks"),
+    State({"type": "dry-input", "plant": ALL}, "value"),
+    State({"type": "ideal-low-input", "plant": ALL}, "value"),
+    State({"type": "ideal-high-input", "plant": ALL}, "value"),
+    State("plant-rules-store", "data"),
+    prevent_initial_call=True,
+)
+def save_rules(n_clicks, dry_values, low_values, high_values, current_rules):
+    plants = list(FEEDS.keys())
+    new_rules = {}
+
+    for i, plant in enumerate(plants):
+        dry = dry_values[i]
+        low = low_values[i]
+        high = high_values[i]
+
+        if dry is None or low is None or high is None:
+            return no_update, "All values are required."
+
+        if not (0 <= dry <= low <= high <= 100):
+            return no_update, f"Invalid values for {plant}. Must satisfy dry ≤ ideal low ≤ ideal high."
+
+        new_rules[plant] = {
+            "dry": dry,
+            "ideal_low": low,
+            "ideal_high": high,
+        }
+
+    return new_rules, "Rules saved in this browser."
+
+
+@app.callback(
     [Output(f"card-{plant}", "children") for plant in plant_names]
     + [Output("system-status", "children"), Output("alert-banner", "children")],
     Input("refresh", "n_intervals"),
+    State("plant-rules-store", "data"),
 )
-def update_cards(n):
+def update_cards(n, rules_dict):
+    if not rules_dict:
+        rules_dict = DEFAULT_PLANT_RULES
+
     session = make_session()
     cards = []
     dry_alerts = []
@@ -480,7 +613,7 @@ def update_cards(n):
                 else None
             )
 
-            recommendation, rec_color, bg_color = get_watering_recommendation(plant, moisture)
+            recommendation, rec_color, bg_color = get_watering_recommendation(plant, moisture, rules_dict)
 
             latest_snapshot[plant] = {
                 "moisture": moisture,
@@ -609,19 +742,26 @@ def update_cards(n):
 @app.callback(
     Output("tab-content", "children"),
     [Input("view-tabs", "value"), Input("refresh", "n_intervals")],
+    State("plant-rules-store", "data"),
 )
-def render_tab(tab, n):
+def render_tab(tab, n, rules_dict):
+    if not rules_dict:
+        rules_dict = DEFAULT_PLANT_RULES
+
+    if tab == "settings":
+        return build_settings_panel(rules_dict)
+
     session = make_session()
 
     if tab == "live":
-        moisture_fig, temp_fig = build_live_figures(session)
+        moisture_fig, temp_fig = build_live_figures(session, rules_dict)
         return html.Div([dcc.Graph(figure=moisture_fig), dcc.Graph(figure=temp_fig)])
 
     if tab == "weekly":
-        weekly_moisture_fig, weekly_temp_fig = build_weekly_figures(session)
+        weekly_moisture_fig, weekly_temp_fig = build_weekly_figures(session, rules_dict)
         return html.Div([dcc.Graph(figure=weekly_moisture_fig), dcc.Graph(figure=weekly_temp_fig)])
 
-    monthly_moisture_fig, monthly_temp_fig = build_monthly_figures(session)
+    monthly_moisture_fig, monthly_temp_fig = build_monthly_figures(session, rules_dict)
     return html.Div([dcc.Graph(figure=monthly_moisture_fig), dcc.Graph(figure=monthly_temp_fig)])
 
 
