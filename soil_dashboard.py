@@ -7,6 +7,7 @@ import requests
 from dash import Dash, html, dcc, Input, Output, State, ALL, no_update
 import plotly.graph_objects as go
 
+
 # -----------------------------
 # Adafruit IO settings
 # -----------------------------
@@ -35,6 +36,7 @@ HEADERS = {
 
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 
+
 # -----------------------------
 # Logging / notification settings
 # -----------------------------
@@ -57,11 +59,13 @@ if not SHEETS_WEBHOOK_URL:
 if not RESEND_API_KEY or not ALERT_EMAIL_TO or not ALERT_EMAIL_FROM:
     print("Warning: Email variables not fully set — email notifications disabled", flush=True)
 
+
 # -----------------------------
 # Default plant rules
 # -----------------------------
 DEFAULT_RULE = {"dry": 20, "ideal_low": 35, "ideal_high": 80}
 DEFAULT_PLANT_RULES = {plant: DEFAULT_RULE.copy() for plant in FEEDS}
+
 
 # -----------------------------
 # Helpers
@@ -98,7 +102,7 @@ def get_history_for_days(feed_key, session, days, limit=1000):
         created_at = entry.get("created_at")
         value = entry.get("value")
 
-        if not created_at or not value:
+        if not created_at or value is None:
             continue
 
         try:
@@ -106,7 +110,7 @@ def get_history_for_days(feed_key, session, days, limit=1000):
             payload = json.loads(value)
             moisture = float(payload.get("moisture_pct"))
             temp_f = float(payload.get("temp_f"))
-        except Exception:
+        except (ValueError, TypeError, json.JSONDecodeError):
             continue
 
         if ts >= cutoff:
@@ -273,7 +277,7 @@ def maybe_send_daily_summary(latest_snapshot):
         temp_f = entry.get("temp_f")
         rec = entry.get("recommendation")
 
-        if moisture is None:
+        if moisture is None or temp_f is None:
             line = f"- {plant}: no data"
         else:
             line = f"- {plant}: {moisture:.1f}% | {temp_f:.1f}°F | {rec}"
@@ -432,6 +436,7 @@ def build_settings_panel(rules_dict):
 
     return html.Div(children)
 
+
 # -----------------------------
 # Figure builders
 # -----------------------------
@@ -443,7 +448,9 @@ def build_live_figures(session, rules_dict):
 
     for plant, feed_key in FEEDS.items():
         try:
-            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=1, limit=300)
+            times, moisture_vals, temp_vals = get_history_for_days(
+                feed_key, session, days=1, limit=300
+            )
 
             if times:
                 moisture_fig.add_trace(
@@ -487,13 +494,15 @@ def build_weekly_figures(session, rules_dict):
 
     for plant, feed_key in FEEDS.items():
         try:
-            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=7, limit=1000)
-            times_m, moisture_vals = downsample_data(times, moisture_vals, step=2)
-            times_t, temp_vals = downsample_data(times, temp_vals, step=2)
+            times, moisture_vals, temp_vals = get_history_for_days(
+                feed_key, session, days=7, limit=1000
+            )
+            times_m, moisture_vals_ds = downsample_data(times, moisture_vals, step=2)
+            times_t, temp_vals_ds = downsample_data(times, temp_vals, step=2)
 
             if times_m:
                 weekly_moisture_fig.add_trace(
-                    go.Scatter(x=times_m, y=moisture_vals, mode="lines", name=plant)
+                    go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant)
                 )
                 if not added_band:
                     add_ideal_band(weekly_moisture_fig, plant, rules_dict)
@@ -501,7 +510,7 @@ def build_weekly_figures(session, rules_dict):
 
             if times_t:
                 weekly_temp_fig.add_trace(
-                    go.Scatter(x=times_t, y=temp_vals, mode="lines", name=plant)
+                    go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant)
                 )
 
         except Exception as e:
@@ -534,13 +543,15 @@ def build_monthly_figures(session, rules_dict):
 
     for plant, feed_key in FEEDS.items():
         try:
-            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=30, limit=1000)
-            times_m, moisture_vals = downsample_data(times, moisture_vals, step=10)
-            times_t, temp_vals = downsample_data(times, temp_vals, step=10)
+            times, moisture_vals, temp_vals = get_history_for_days(
+                feed_key, session, days=30, limit=1000
+            )
+            times_m, moisture_vals_ds = downsample_data(times, moisture_vals, step=10)
+            times_t, temp_vals_ds = downsample_data(times, temp_vals, step=10)
 
             if times_m:
                 monthly_moisture_fig.add_trace(
-                    go.Scatter(x=times_m, y=moisture_vals, mode="lines", name=plant)
+                    go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant)
                 )
                 if not added_band:
                     add_ideal_band(monthly_moisture_fig, plant, rules_dict)
@@ -548,7 +559,7 @@ def build_monthly_figures(session, rules_dict):
 
             if times_t:
                 monthly_temp_fig.add_trace(
-                    go.Scatter(x=times_t, y=temp_vals, mode="lines", name=plant)
+                    go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant)
                 )
 
         except Exception as e:
@@ -572,17 +583,22 @@ def build_monthly_figures(session, rules_dict):
 
     return monthly_moisture_fig, monthly_temp_fig
 
+
 # -----------------------------
 # Dash app
 # -----------------------------
-app = Dash(__name__)
+app = Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
 app.title = "Soil Monitor Dashboard"
 
 plant_names = list(FEEDS.keys())
 
 app.layout = html.Div(
-    style={"fontFamily": "Arial, sans-serif", "padding": "20px", "backgroundColor": "#f7f7f7"},
+    style={
+        "fontFamily": "Arial, sans-serif",
+        "padding": "20px",
+        "backgroundColor": "#f7f7f7",
+    },
     children=[
         dcc.Store(
             id="plant-rules-store",
@@ -695,13 +711,17 @@ def update_cards(n, rules_dict):
     for plant, feed_key in FEEDS.items():
         try:
             feed_data = fetch_latest_feed_value(feed_key, session)
-            payload_text = feed_data["value"]
+            payload_text = feed_data.get("value")
             created_at = feed_data.get("created_at")
+
+            if payload_text is None:
+                raise ValueError("Latest feed entry missing value")
 
             payload = json.loads(payload_text)
             moisture = float(payload.get("moisture_pct"))
             temp_f = float(payload.get("temp_f"))
-            raw = int(payload.get("raw"))
+            raw_val = payload.get("raw")
+            raw = int(raw_val) if raw_val is not None else None
 
             ts = (
                 datetime.fromisoformat(created_at.replace("Z", "+00:00"))
@@ -709,7 +729,9 @@ def update_cards(n, rules_dict):
                 else None
             )
 
-            recommendation, rec_color, bg_color = get_watering_recommendation(plant, moisture, rules_dict)
+            recommendation, rec_color, bg_color = get_watering_recommendation(
+                plant, moisture, rules_dict
+            )
 
             latest_snapshot[plant] = {
                 "moisture": moisture,
@@ -718,7 +740,13 @@ def update_cards(n, rules_dict):
             }
 
             if should_log_to_sheets(plant, moisture):
-                log_to_google_sheets(ts or datetime.now(timezone.utc), plant, moisture, temp_f, raw)
+                log_to_google_sheets(
+                    ts or datetime.now(timezone.utc),
+                    plant,
+                    moisture,
+                    temp_f,
+                    raw,
+                )
 
             maybe_send_urgent_alert(plant, moisture, recommendation)
 
@@ -733,10 +761,10 @@ def update_cards(n, rules_dict):
                         html.H3(plant, style={"marginTop": "0"}),
                         html.P(f"Moisture: {moisture:.1f} %"),
                         html.P(f"Temperature: {temp_f:.2f} °F"),
-                        html.P(f"Raw: {raw}"),
+                        html.P(f"Raw: {raw if raw is not None else '--'}"),
                         html.P(
                             f"Recommendation: {recommendation}",
-                            style={"fontWeight": "bold", "color": rec_color}
+                            style={"fontWeight": "bold", "color": rec_color},
                         ),
                         html.P(
                             f"Last update: {ts.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
@@ -770,7 +798,7 @@ def update_cards(n, rules_dict):
                         html.P("Raw: --"),
                         html.P(
                             "Recommendation: No data",
-                            style={"fontWeight": "bold", "color": "#666666"}
+                            style={"fontWeight": "bold", "color": "#666666"},
                         ),
                         html.P(
                             "Last update: --",
@@ -806,9 +834,7 @@ def update_cards(n, rules_dict):
                     "padding": "10px 14px",
                     "backgroundColor": "#ffffff",
                     "border": "1px solid #ddd",
-                    "bord
-::contentReference[oaicite:4]{index=4}
-erRadius": "10px",
+                    "borderRadius": "10px",
                     "display": "inline-block",
                 },
             )
@@ -871,4 +897,4 @@ def render_tab(tab, n, rules_dict):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=10000, debug=False)
