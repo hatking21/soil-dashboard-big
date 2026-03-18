@@ -3,7 +3,6 @@ import json
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 
-import pandas as pd
 import paho.mqtt.client as mqtt
 from dash import Dash, html, dcc, Input, Output
 import plotly.graph_objects as go
@@ -17,6 +16,8 @@ AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
+print("AIO_USERNAME:", AIO_USERNAME)
+print("AIO_KEY loaded:", AIO_KEY is not None)
 BROKER = "io.adafruit.com"
 PORT = 1883
 
@@ -91,11 +92,13 @@ def on_message(client, userdata, msg):
 
 
 def mqtt_thread():
+    print("Starting MQTT thread")
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     client.username_pw_set(AIO_USERNAME, AIO_KEY)
     client.on_connect = on_connect
     client.on_message = on_message
     client.connect(BROKER, PORT, 60)
+    print("MQTT connected call made")
     client.loop_forever()
 
 
