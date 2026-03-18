@@ -30,13 +30,11 @@ HEADERS = {
 # -----------------------------
 # Google Sheets backup
 # -----------------------------
-# You can replace this later with:
-# SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
 SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
 
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled")
-    
+
 # Prevent duplicate sheet writes for the same reading
 logged_timestamps = {plant: None for plant in FEEDS}
 
@@ -61,6 +59,17 @@ plant_history = defaultdict(lambda: {
 
 latest_data = {
     plant: {"moisture_pct": None, "temp_f": None, "raw": None, "timestamp": None}
+    for plant in FEEDS
+}
+
+# Cached historical data for faster dashboard loads
+weekly_cache = {
+    plant: {"time": [], "moisture": [], "temp": []}
+    for plant in FEEDS
+}
+
+monthly_cache = {
+    plant: {"time": [], "moisture": [], "temp": []}
     for plant in FEEDS
 }
 
@@ -108,6 +117,12 @@ def get_history_for_days(feed_key, days, limit=1000):
             temp_vals.append(temp_f)
 
     return times, moisture_vals, temp_vals
+
+
+def downsample_data(times, values, step=5):
+    if len(times) <= step:
+        return times, values
+    return times[::step], values[::step]
 
 
 def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
@@ -173,7 +188,12 @@ app.layout = html.Div(
     children=[
         html.H1("Plant Soil Monitor"),
         html.P("Live readings from Adafruit IO"),
-        dcc.Interval(id="refresh", interval=10000, n_intervals=0),
+
+        # Fast refresh for cards + live graphs
+        dcc.Interval(id="live-refresh", interval=10000, n_intervals=0),
+
+        # Slower refresh for weekly/monthly history
+        dcc.Interval(id="history-refresh", interval=300000, n_intervals=0),
 
         html.Div(
             [make_card(plant) for plant in plant_names],
@@ -199,14 +219,10 @@ app.layout = html.Div(
     + [
         Output("moisture-graph", "figure"),
         Output("temperature-graph", "figure"),
-        Output("weekly-moisture-graph", "figure"),
-        Output("weekly-temperature-graph", "figure"),
-        Output("monthly-moisture-graph", "figure"),
-        Output("monthly-temperature-graph", "figure"),
     ],
-    Input("refresh", "n_intervals"),
+    Input("live-refresh", "n_intervals"),
 )
-def update_dashboard(n):
+def update_live_dashboard(n):
     # -----------------------------
     # Fetch latest values for cards + live graphs
     # -----------------------------
@@ -322,37 +338,98 @@ def update_dashboard(n):
         height=450,
     )
 
-    # -----------------------------
-    # Weekly graphs
-    # -----------------------------
-    weekly_moisture_fig = go.Figure()
-    weekly_temp_fig = go.Figure()
+    return cards + [moisture_fig, temp_fig]
 
+
+@app.callback(
+    [
+        Output("weekly-moisture-graph", "figure"),
+        Output("weekly-temperature-graph", "figure"),
+        Output("monthly-moisture-graph", "figure"),
+        Output("monthly-temperature-graph", "figure"),
+    ],
+    Input("history-refresh", "n_intervals"),
+)
+def update_history_graphs(n):
+    # -----------------------------
+    # Refresh weekly/monthly caches
+    # -----------------------------
     for plant, feed_key in FEEDS.items():
         try:
             times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=7, limit=1000)
-
-            if times:
-                weekly_moisture_fig.add_trace(
-                    go.Scatter(
-                        x=times,
-                        y=moisture_vals,
-                        mode="lines+markers",
-                        name=plant,
-                    )
-                )
-
-                weekly_temp_fig.add_trace(
-                    go.Scatter(
-                        x=times,
-                        y=temp_vals,
-                        mode="lines+markers",
-                        name=plant,
-                    )
-                )
-
+            weekly_cache[plant] = {
+                "time": times,
+                "moisture": moisture_vals,
+                "temp": temp_vals,
+            }
         except Exception as e:
             print(f"Failed weekly history for {plant}: {e}")
+
+        try:
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=30, limit=1000)
+
+            # Downsample monthly data to speed up plotting
+            ds_times_moisture, ds_moisture_vals = downsample_data(times, moisture_vals, step=5)
+            ds_times_temp, ds_temp_vals = downsample_data(times, temp_vals, step=5)
+
+            monthly_cache[plant] = {
+                "time_moisture": ds_times_moisture,
+                "moisture": ds_moisture_vals,
+                "time_temp": ds_times_temp,
+                "temp": ds_temp_vals,
+            }
+        except Exception as e:
+            print(f"Failed monthly history for {plant}: {e}")
+
+    # -----------------------------
+    # Build weekly/monthly figures
+    # -----------------------------
+    weekly_moisture_fig = go.Figure()
+    weekly_temp_fig = go.Figure()
+    monthly_moisture_fig = go.Figure()
+    monthly_temp_fig = go.Figure()
+
+    for plant in plant_names:
+        w = weekly_cache[plant]
+        m = monthly_cache[plant]
+
+        if w["time"]:
+            weekly_moisture_fig.add_trace(
+                go.Scatter(
+                    x=w["time"],
+                    y=w["moisture"],
+                    mode="lines+markers",
+                    name=plant,
+                )
+            )
+            weekly_temp_fig.add_trace(
+                go.Scatter(
+                    x=w["time"],
+                    y=w["temp"],
+                    mode="lines+markers",
+                    name=plant,
+                )
+            )
+
+        if m.get("time_moisture"):
+            monthly_moisture_fig.add_trace(
+                go.Scatter(
+                    x=m["time_moisture"],
+                    y=m["moisture"],
+                    mode="lines+markers",
+                    name=plant,
+                )
+            )
+
+        if m.get("time_temp"):
+            monthly_temp_fig.add_trace(
+                go.Scatter(
+                    x=m["time_temp"],
+                    y=m["temp"],
+                    mode="lines+markers",
+                    name=plant,
+                )
+            )
 
     weekly_moisture_fig.update_layout(
         title="Weekly Moisture Trend (Last 7 Days)",
@@ -370,38 +447,6 @@ def update_dashboard(n):
         height=450,
     )
 
-    # -----------------------------
-    # Monthly graphs
-    # -----------------------------
-    monthly_moisture_fig = go.Figure()
-    monthly_temp_fig = go.Figure()
-
-    for plant, feed_key in FEEDS.items():
-        try:
-            times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=30, limit=1000)
-
-            if times:
-                monthly_moisture_fig.add_trace(
-                    go.Scatter(
-                        x=times,
-                        y=moisture_vals,
-                        mode="lines+markers",
-                        name=plant,
-                    )
-                )
-
-                monthly_temp_fig.add_trace(
-                    go.Scatter(
-                        x=times,
-                        y=temp_vals,
-                        mode="lines+markers",
-                        name=plant,
-                    )
-                )
-
-        except Exception as e:
-            print(f"Failed monthly history for {plant}: {e}")
-
     monthly_moisture_fig.update_layout(
         title="Monthly Moisture Trend (Last 30 Days)",
         xaxis_title="Time",
@@ -418,9 +463,7 @@ def update_dashboard(n):
         height=450,
     )
 
-    return cards + [
-        moisture_fig,
-        temp_fig,
+    return [
         weekly_moisture_fig,
         weekly_temp_fig,
         monthly_moisture_fig,
