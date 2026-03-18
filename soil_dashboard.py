@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 from dash import Dash, html, dcc, Input, Output
@@ -12,6 +13,7 @@ import plotly.graph_objects as go
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
 SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
@@ -27,26 +29,35 @@ HEADERS = {
     "X-AIO-Key": AIO_KEY,
 }
 
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")
+
 # -----------------------------
-# Logging settings
+# Logging / notification settings
 # -----------------------------
-SHEETS_LOG_INTERVAL = 300   # seconds = 5 min
+SHEETS_LOG_INTERVAL = 300   # 5 min
 MIN_MOISTURE_CHANGE = 2.0   # percent
 
 last_logged_time = {plant: None for plant in FEEDS}
 last_logged_moisture = {plant: None for plant in FEEDS}
 
+# Discord anti-spam state
+alert_state = {plant: False for plant in FEEDS}
+last_daily_summary_date = None
+
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
+
+if not DISCORD_WEBHOOK_URL:
+    print("Warning: DISCORD_WEBHOOK_URL not set — Discord notifications disabled", flush=True)
 
 # -----------------------------
 # Plant-specific watering rules
 # -----------------------------
 PLANT_RULES = {
-    "Amy Dieffenbachia": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
-    "Peace Lily": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
-    "Periwinkle": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
-    "Rex Begonia": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
+    "Amy Dieffenbachia": {"dry": 30, "ideal_low": 35, "ideal_high": 60},
+    "Peace Lily": {"dry": 35, "ideal_low": 40, "ideal_high": 65},
+    "Periwinkle": {"dry": 25, "ideal_low": 30, "ideal_high": 55},
+    "Rex Begonia": {"dry": 40, "ideal_low": 45, "ideal_high": 70},
 }
 
 # -----------------------------
@@ -138,8 +149,7 @@ def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
     }
 
     try:
-        resp = requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
-        print(f"Sheets log status for {plant}: {resp.status_code}", flush=True)
+        requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
     except Exception as e:
         print(f"Failed to log to Google Sheets for {plant}: {e}", flush=True)
 
@@ -165,6 +175,77 @@ def should_log_to_sheets(plant, moisture):
         return True
 
     return False
+
+
+def send_discord_message(content):
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    try:
+        resp = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json={"content": content},
+            timeout=15,
+        )
+        if resp.status_code >= 400:
+            print(f"Discord webhook failed: {resp.status_code} {resp.text}", flush=True)
+    except Exception as e:
+        print(f"Failed to send Discord message: {e}", flush=True)
+
+
+def maybe_send_urgent_alert(plant, moisture, recommendation):
+    was_alerting = alert_state[plant]
+    is_alerting = (recommendation == "Water now")
+
+    if is_alerting and not was_alerting:
+        send_discord_message(
+            f"🚨 **Water alert**\n"
+            f"**{plant}** is dry.\n"
+            f"Moisture: **{moisture:.1f}%**\n"
+            f"Recommendation: **Water now**"
+        )
+
+    alert_state[plant] = is_alerting
+
+
+def maybe_send_daily_summary(latest_snapshot):
+    global last_daily_summary_date
+
+    now_local = datetime.now(LOCAL_TZ)
+    today = now_local.date()
+
+    # send once per day after 6:00 PM local time
+    if now_local.hour < 18:
+        return
+
+    if last_daily_summary_date == today:
+        return
+
+    lines = []
+    urgent = []
+
+    for plant, entry in latest_snapshot.items():
+        moisture = entry.get("moisture")
+        temp_f = entry.get("temp_f")
+        rec = entry.get("recommendation")
+
+        if moisture is None:
+            line = f"- {plant}: no data"
+        else:
+            line = f"- {plant}: {moisture:.1f}% | {temp_f:.1f}°F | {rec}"
+
+        lines.append(line)
+
+        if rec == "Water now":
+            urgent.append(plant)
+
+    header = f"📅 **Daily Plant Summary** ({now_local.strftime('%Y-%m-%d %I:%M %p')})"
+    if urgent:
+        header += f"\nUrgent: {', '.join(urgent)}"
+
+    message = header + "\n" + "\n".join(lines)
+    send_discord_message(message)
+    last_daily_summary_date = today
 
 
 def add_ideal_band(fig, plant):
@@ -198,7 +279,7 @@ def build_live_figures(session):
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
 
-    added_moisture_band = False
+    added_band = False
 
     for plant, feed_key in FEEDS.items():
         try:
@@ -206,26 +287,15 @@ def build_live_figures(session):
 
             if times:
                 moisture_fig.add_trace(
-                    go.Scatter(
-                        x=times,
-                        y=moisture_vals,
-                        mode="lines",
-                        name=plant,
-                    )
+                    go.Scatter(x=times, y=moisture_vals, mode="lines", name=plant)
                 )
-
                 temp_fig.add_trace(
-                    go.Scatter(
-                        x=times,
-                        y=temp_vals,
-                        mode="lines",
-                        name=plant,
-                    )
+                    go.Scatter(x=times, y=temp_vals, mode="lines", name=plant)
                 )
 
-                if not added_moisture_band:
+                if not added_band:
                     add_ideal_band(moisture_fig, plant)
-                    added_moisture_band = True
+                    added_band = True
 
         except Exception as e:
             print(f"Failed live history for {plant}: {e}", flush=True)
@@ -258,32 +328,20 @@ def build_weekly_figures(session):
     for plant, feed_key in FEEDS.items():
         try:
             times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=7, limit=1000)
-
             times_m, moisture_vals = downsample_data(times, moisture_vals, step=2)
             times_t, temp_vals = downsample_data(times, temp_vals, step=2)
 
             if times_m:
                 weekly_moisture_fig.add_trace(
-                    go.Scatter(
-                        x=times_m,
-                        y=moisture_vals,
-                        mode="lines",
-                        name=plant,
-                    )
+                    go.Scatter(x=times_m, y=moisture_vals, mode="lines", name=plant)
                 )
-
                 if not added_band:
                     add_ideal_band(weekly_moisture_fig, plant)
                     added_band = True
 
             if times_t:
                 weekly_temp_fig.add_trace(
-                    go.Scatter(
-                        x=times_t,
-                        y=temp_vals,
-                        mode="lines",
-                        name=plant,
-                    )
+                    go.Scatter(x=times_t, y=temp_vals, mode="lines", name=plant)
                 )
 
         except Exception as e:
@@ -317,32 +375,20 @@ def build_monthly_figures(session):
     for plant, feed_key in FEEDS.items():
         try:
             times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=30, limit=1000)
-
             times_m, moisture_vals = downsample_data(times, moisture_vals, step=10)
             times_t, temp_vals = downsample_data(times, temp_vals, step=10)
 
             if times_m:
                 monthly_moisture_fig.add_trace(
-                    go.Scatter(
-                        x=times_m,
-                        y=moisture_vals,
-                        mode="lines",
-                        name=plant,
-                    )
+                    go.Scatter(x=times_m, y=moisture_vals, mode="lines", name=plant)
                 )
-
                 if not added_band:
                     add_ideal_band(monthly_moisture_fig, plant)
                     added_band = True
 
             if times_t:
                 monthly_temp_fig.add_trace(
-                    go.Scatter(
-                        x=times_t,
-                        y=temp_vals,
-                        mode="lines",
-                        name=plant,
-                    )
+                    go.Scatter(x=times_t, y=temp_vals, mode="lines", name=plant)
                 )
 
         except Exception as e:
@@ -414,7 +460,8 @@ def update_cards(n):
     cards = []
     dry_alerts = []
     successful_fetches = 0
-    refresh_time = datetime.now().astimezone().strftime("%Y-%m-%d %I:%M:%S %p")
+    refresh_time = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
+    latest_snapshot = {}
 
     for plant, feed_key in FEEDS.items():
         try:
@@ -435,8 +482,16 @@ def update_cards(n):
 
             recommendation, rec_color, bg_color = get_watering_recommendation(plant, moisture)
 
+            latest_snapshot[plant] = {
+                "moisture": moisture,
+                "temp_f": temp_f,
+                "recommendation": recommendation,
+            }
+
             if should_log_to_sheets(plant, moisture):
                 log_to_google_sheets(ts or datetime.now(timezone.utc), plant, moisture, temp_f, raw)
+
+            maybe_send_urgent_alert(plant, moisture, recommendation)
 
             if recommendation == "Water now":
                 dry_alerts.append(plant)
@@ -455,7 +510,7 @@ def update_cards(n):
                             style={"fontWeight": "bold", "color": rec_color}
                         ),
                         html.P(
-                            f"Last update: {ts.astimezone().strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
+                            f"Last update: {ts.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
                             style={"color": "#666", "fontSize": "0.9rem"},
                         ),
                     ],
@@ -471,6 +526,12 @@ def update_cards(n):
 
         except Exception as e:
             print(f"Failed latest card fetch for {plant}: {e}", flush=True)
+            latest_snapshot[plant] = {
+                "moisture": None,
+                "temp_f": None,
+                "recommendation": "No data",
+            }
+
             cards.append([
                 html.Div(
                     [
@@ -496,6 +557,8 @@ def update_cards(n):
                     },
                 )
             ])
+
+    maybe_send_daily_summary(latest_snapshot)
 
     status = html.Div(
         [
@@ -545,33 +608,21 @@ def update_cards(n):
 
 @app.callback(
     Output("tab-content", "children"),
-    [
-        Input("view-tabs", "value"),
-        Input("refresh", "n_intervals"),
-    ],
+    [Input("view-tabs", "value"), Input("refresh", "n_intervals")],
 )
 def render_tab(tab, n):
     session = make_session()
 
     if tab == "live":
         moisture_fig, temp_fig = build_live_figures(session)
-        return html.Div([
-            dcc.Graph(figure=moisture_fig),
-            dcc.Graph(figure=temp_fig),
-        ])
+        return html.Div([dcc.Graph(figure=moisture_fig), dcc.Graph(figure=temp_fig)])
 
     if tab == "weekly":
         weekly_moisture_fig, weekly_temp_fig = build_weekly_figures(session)
-        return html.Div([
-            dcc.Graph(figure=weekly_moisture_fig),
-            dcc.Graph(figure=weekly_temp_fig),
-        ])
+        return html.Div([dcc.Graph(figure=weekly_moisture_fig), dcc.Graph(figure=weekly_temp_fig)])
 
     monthly_moisture_fig, monthly_temp_fig = build_monthly_figures(session)
-    return html.Div([
-        dcc.Graph(figure=monthly_moisture_fig),
-        dcc.Graph(figure=monthly_temp_fig),
-    ])
+    return html.Div([dcc.Graph(figure=monthly_moisture_fig), dcc.Graph(figure=monthly_temp_fig)])
 
 
 if __name__ == "__main__":
