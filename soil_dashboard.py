@@ -44,6 +44,10 @@ last_logged_moisture = {plant: None for plant in FEEDS}
 alert_state = {plant: False for plant in FEEDS}
 last_daily_summary_date = None
 
+# Optional testing override:
+# set DISCORD_FORCE_ALERTS=true in Render to send urgent alerts every refresh while in Water now
+DISCORD_FORCE_ALERTS = os.getenv("DISCORD_FORCE_ALERTS", "false").lower() == "true"
+
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
 
@@ -175,6 +179,7 @@ def should_log_to_sheets(plant, moisture):
 
 def send_discord_message(content):
     if not DISCORD_WEBHOOK_URL:
+        print("Discord webhook URL missing", flush=True)
         return
 
     try:
@@ -183,6 +188,9 @@ def send_discord_message(content):
             json={"content": content},
             timeout=15,
         )
+        print(f"Discord status: {resp.status_code}", flush=True)
+        print(f"Discord response: {resp.text}", flush=True)
+
         if resp.status_code >= 400:
             print(f"Discord webhook failed: {resp.status_code} {resp.text}", flush=True)
     except Exception as e:
@@ -193,7 +201,22 @@ def maybe_send_urgent_alert(plant, moisture, recommendation):
     was_alerting = alert_state[plant]
     is_alerting = (recommendation == "Water now")
 
-    if is_alerting and not was_alerting:
+    print(
+        f"Discord check | {plant} | moisture={moisture} | "
+        f"recommendation={recommendation} | was_alerting={was_alerting} | "
+        f"is_alerting={is_alerting} | force={DISCORD_FORCE_ALERTS}",
+        flush=True
+    )
+
+    should_send = False
+
+    if DISCORD_FORCE_ALERTS and is_alerting:
+        should_send = True
+    elif is_alerting and not was_alerting:
+        should_send = True
+
+    if should_send:
+        print(f"Sending Discord alert for {plant}", flush=True)
         send_discord_message(
             f"🚨 **Water alert**\n"
             f"**{plant}** is dry.\n"
