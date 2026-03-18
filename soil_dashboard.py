@@ -15,6 +15,8 @@ import os
 # -----------------------------
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
+if not AIO_USERNAME or not AIO_KEY:
+    raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
 BROKER = "io.adafruit.com"
 PORT = 1883
 
@@ -223,6 +225,8 @@ def update_dashboard(n):
     return cards + [moisture_fig, temp_fig]
 
 
+# Start MQTT thread immediately (IMPORTANT for Render)
+threading.Thread(target=mqtt_thread, daemon=True).start()
+
 if __name__ == "__main__":
-    threading.Thread(target=mqtt_thread, daemon=True).start()
     app.run(host="0.0.0.0", port=8050)
