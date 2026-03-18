@@ -1,34 +1,32 @@
-import threading
+import os
 import json
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime
 
-import paho.mqtt.client as mqtt
+import requests
 from dash import Dash, html, dcc, Input, Output
 import plotly.graph_objects as go
 
-import os
-
 # -----------------------------
-# Adafruit IO / MQTT settings
+# Adafruit IO settings
 # -----------------------------
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
+
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
-print("AIO_USERNAME:", AIO_USERNAME)
-print("AIO_KEY loaded:", AIO_KEY is not None)
-BROKER = "io.adafruit.com"
-PORT = 1883
 
-TOPIC_TO_PLANT = {
-    f"{AIO_USERNAME}/feeds/amy-dieffenbachia": "Amy Dieffenbachia",
-    f"{AIO_USERNAME}/feeds/peace-lily": "Peace Lily",
-    f"{AIO_USERNAME}/feeds/periwinkle": "Periwinkle",
-    f"{AIO_USERNAME}/feeds/rex-begonia": "Rex Begonia",
+FEEDS = {
+    "Amy Dieffenbachia": "amy-dieffenbachia",
+    "Peace Lily": "peace-lily",
+    "Periwinkle": "periwinkle",
+    "Rex Begonia": "rex-begonia",
 }
 
-# Keep recent points in memory for the live dashboard
+HEADERS = {
+    "X-AIO-Key": AIO_KEY,
+}
+
 MAX_POINTS = 500
 
 plant_history = defaultdict(lambda: {
@@ -40,76 +38,23 @@ plant_history = defaultdict(lambda: {
 
 latest_data = {
     plant: {"moisture_pct": None, "temp_f": None, "raw": None, "timestamp": None}
-    for plant in TOPIC_TO_PLANT.values()
+    for plant in FEEDS
 }
 
-data_lock = threading.Lock()
+
+def fetch_latest_feed_value(feed_key):
+    url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data/last"
+    resp = requests.get(url, headers=HEADERS, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
 
 
-# -----------------------------
-# MQTT callbacks
-# -----------------------------
-def on_connect(client, userdata, flags, reason_code, properties=None):
-    print("Connected with code:", reason_code)
-    for topic in TOPIC_TO_PLANT:
-        client.subscribe(topic)
-        print("Subscribed to:", topic)
-
-
-def on_message(client, userdata, msg):
-    topic = msg.topic
-    plant = TOPIC_TO_PLANT.get(topic)
-    if plant is None:
-        return
-
-    payload_text = msg.payload.decode("utf-8")
-
-    try:
-        data = json.loads(payload_text)
-        moisture = float(data.get("moisture_pct"))
-        temp_f = float(data.get("temp_f"))
-        raw = int(data.get("raw"))
-    except Exception as e:
-        print("Bad payload:", payload_text, "| Error:", e)
-        return
-
-    timestamp = datetime.now(timezone.utc)
-
-    with data_lock:
-        latest_data[plant] = {
-            "moisture_pct": moisture,
-            "temp_f": temp_f,
-            "raw": raw,
-            "timestamp": timestamp,
-        }
-
-        plant_history[plant]["time"].append(timestamp)
-        plant_history[plant]["moisture_pct"].append(moisture)
-        plant_history[plant]["temp_f"].append(temp_f)
-        plant_history[plant]["raw"].append(raw)
-
-    print(f"{timestamp.isoformat()} | {plant} | {moisture:.1f}% | {temp_f:.2f} F | raw={raw}")
-
-
-def mqtt_thread():
-    print("Starting MQTT thread")
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    client.username_pw_set(AIO_USERNAME, AIO_KEY)
-    client.on_connect = on_connect
-    client.on_message = on_message
-    client.connect(BROKER, PORT, 60)
-    print("MQTT connected call made")
-    client.loop_forever()
-
-
-# -----------------------------
-# Dash app
-# -----------------------------
 app = Dash(__name__)
 server = app.server
 app.title = "Soil Monitor Dashboard"
 
-plant_names = list(TOPIC_TO_PLANT.values())
+plant_names = list(FEEDS.keys())
+
 
 def make_card(plant):
     return html.Div(
@@ -125,12 +70,13 @@ def make_card(plant):
         },
     )
 
+
 app.layout = html.Div(
     style={"fontFamily": "Arial, sans-serif", "padding": "20px", "backgroundColor": "#f7f7f7"},
     children=[
         html.H1("Plant Soil Monitor"),
         html.P("Live readings from Adafruit IO"),
-        dcc.Interval(id="refresh", interval=3000, n_intervals=0),
+        dcc.Interval(id="refresh", interval=10000, n_intervals=0),
 
         html.Div(
             [make_card(plant) for plant in plant_names],
@@ -153,21 +99,39 @@ app.layout = html.Div(
     Input("refresh", "n_intervals"),
 )
 def update_dashboard(n):
-    with data_lock:
-        latest_copy = {k: v.copy() for k, v in latest_data.items()}
-        history_copy = {
-            plant: {
-                "time": list(vals["time"]),
-                "moisture_pct": list(vals["moisture_pct"]),
-                "temp_f": list(vals["temp_f"]),
-                "raw": list(vals["raw"]),
-            }
-            for plant, vals in plant_history.items()
-        }
+    for plant, feed_key in FEEDS.items():
+        try:
+            feed_data = fetch_latest_feed_value(feed_key)
+            payload_text = feed_data["value"]
+            created_at = feed_data.get("created_at")
+
+            payload = json.loads(payload_text)
+            moisture = float(payload.get("moisture_pct"))
+            temp_f = float(payload.get("temp_f"))
+            raw = int(payload.get("raw"))
+
+            timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00")) if created_at else datetime.utcnow()
+
+            previous_ts = latest_data[plant]["timestamp"]
+            if previous_ts != timestamp:
+                latest_data[plant] = {
+                    "moisture_pct": moisture,
+                    "temp_f": temp_f,
+                    "raw": raw,
+                    "timestamp": timestamp,
+                }
+
+                plant_history[plant]["time"].append(timestamp)
+                plant_history[plant]["moisture_pct"].append(moisture)
+                plant_history[plant]["temp_f"].append(temp_f)
+                plant_history[plant]["raw"].append(raw)
+
+        except Exception as e:
+            print(f"Failed to fetch {plant}: {e}")
 
     cards = []
     for plant in plant_names:
-        entry = latest_copy.get(plant, {})
+        entry = latest_data.get(plant, {})
         moisture = entry.get("moisture_pct")
         temp_f = entry.get("temp_f")
         raw = entry.get("raw")
@@ -188,14 +152,14 @@ def update_dashboard(n):
     temp_fig = go.Figure()
 
     for plant in plant_names:
-        hist = history_copy.get(plant)
+        hist = plant_history.get(plant)
         if not hist or len(hist["time"]) == 0:
             continue
 
         moisture_fig.add_trace(
             go.Scatter(
-                x=hist["time"],
-                y=hist["moisture_pct"],
+                x=list(hist["time"]),
+                y=list(hist["moisture_pct"]),
                 mode="lines+markers",
                 name=plant,
             )
@@ -203,8 +167,8 @@ def update_dashboard(n):
 
         temp_fig.add_trace(
             go.Scatter(
-                x=hist["time"],
-                y=hist["temp_f"],
+                x=list(hist["time"]),
+                y=list(hist["temp_f"]),
                 mode="lines+markers",
                 name=plant,
             )
@@ -228,9 +192,6 @@ def update_dashboard(n):
 
     return cards + [moisture_fig, temp_fig]
 
-
-# Start MQTT thread immediately (IMPORTANT for Render)
-threading.Thread(target=mqtt_thread, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
