@@ -13,7 +13,11 @@ import plotly.graph_objects as go
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
 SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+# Email via Resend
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO")
+ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM")
 
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
@@ -40,25 +44,18 @@ MIN_MOISTURE_CHANGE = 2.0   # percent
 last_logged_time = {plant: None for plant in FEEDS}
 last_logged_moisture = {plant: None for plant in FEEDS}
 
-# Discord anti-spam state
+# Email anti-spam state
 alert_state = {plant: False for plant in FEEDS}
 last_daily_summary_date = None
+last_email_sent_at = None
 
-# Optional testing override:
-# set DISCORD_FORCE_ALERTS=true in Render to send urgent alerts every refresh while in Water now
-DISCORD_FORCE_ALERTS = os.getenv("DISCORD_FORCE_ALERTS", "false").lower() == "true"
-
-# Discord cooldown / backoff
-DISCORD_MIN_INTERVAL = 300  # 5 minutes between Discord sends
-DISCORD_BACKOFF_MINUTES = 30
-last_discord_sent_at = None
-discord_backoff_until = None
+EMAIL_MIN_INTERVAL = 60  # seconds between email sends
 
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
 
-if not DISCORD_WEBHOOK_URL:
-    print("Warning: DISCORD_WEBHOOK_URL not set — Discord notifications disabled", flush=True)
+if not RESEND_API_KEY or not ALERT_EMAIL_TO or not ALERT_EMAIL_FROM:
+    print("Warning: Email variables not fully set — email notifications disabled", flush=True)
 
 # -----------------------------
 # Default plant rules
@@ -183,59 +180,51 @@ def should_log_to_sheets(plant, moisture):
     return False
 
 
-def send_discord_message(content):
-    global last_discord_sent_at, discord_backoff_until
+def send_email_alert(subject, text_body):
+    global last_email_sent_at
 
-    if not DISCORD_WEBHOOK_URL:
-        print("Discord webhook URL missing", flush=True)
+    if not RESEND_API_KEY or not ALERT_EMAIL_TO or not ALERT_EMAIL_FROM:
+        print("Email configuration missing", flush=True)
         return False
 
     now = datetime.now(timezone.utc)
-
-    if discord_backoff_until is not None and now < discord_backoff_until:
-        print(
-            f"Discord send skipped due to backoff until {discord_backoff_until.isoformat()}",
-            flush=True
-        )
-        return False
-
-    if last_discord_sent_at is not None:
-        seconds_since_last = (now - last_discord_sent_at).total_seconds()
-        if seconds_since_last < DISCORD_MIN_INTERVAL:
+    if last_email_sent_at is not None:
+        seconds_since_last = (now - last_email_sent_at).total_seconds()
+        if seconds_since_last < EMAIL_MIN_INTERVAL:
             print(
-                f"Discord send skipped due to cooldown ({seconds_since_last:.1f}s since last send)",
+                f"Email send skipped due to cooldown ({seconds_since_last:.1f}s since last send)",
                 flush=True
             )
             return False
 
     try:
         resp = requests.post(
-            DISCORD_WEBHOOK_URL,
-            json={"content": content},
-            timeout=15,
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": ALERT_EMAIL_FROM,
+                "to": [ALERT_EMAIL_TO],
+                "subject": subject,
+                "text": text_body,
+            },
+            timeout=20,
         )
 
-        print(f"Discord status: {resp.status_code}", flush=True)
-        print(f"Discord response: {resp.text}", flush=True)
-
-        if resp.status_code == 429:
-            discord_backoff_until = now + timedelta(minutes=DISCORD_BACKOFF_MINUTES)
-            print(
-                f"Discord rate limited. Backing off until {discord_backoff_until.isoformat()}",
-                flush=True
-            )
-            return False
+        print(f"Email status: {resp.status_code}", flush=True)
+        print(f"Email response: {resp.text}", flush=True)
 
         if resp.status_code >= 400:
-            print(f"Discord webhook failed: {resp.status_code} {resp.text}", flush=True)
+            print(f"Email send failed: {resp.status_code} {resp.text}", flush=True)
             return False
 
-        last_discord_sent_at = now
-        discord_backoff_until = None
+        last_email_sent_at = now
         return True
 
     except Exception as e:
-        print(f"Failed to send Discord message: {e}", flush=True)
+        print(f"Failed to send email: {e}", flush=True)
         return False
 
 
@@ -244,26 +233,21 @@ def maybe_send_urgent_alert(plant, moisture, recommendation):
     is_alerting = (recommendation == "Water now")
 
     print(
-        f"Discord check | {plant} | moisture={moisture} | "
+        f"Email check | {plant} | moisture={moisture} | "
         f"recommendation={recommendation} | was_alerting={was_alerting} | "
-        f"is_alerting={is_alerting} | force={DISCORD_FORCE_ALERTS}",
+        f"is_alerting={is_alerting}",
         flush=True
     )
 
-    should_send = False
-
-    if DISCORD_FORCE_ALERTS and is_alerting:
-        should_send = True
-    elif is_alerting and not was_alerting:
-        should_send = True
-
-    if should_send:
-        print(f"Sending Discord alert for {plant}", flush=True)
-        send_discord_message(
-            f"🚨 **Water alert**\n"
-            f"**{plant}** is dry.\n"
-            f"Moisture: **{moisture:.1f}%**\n"
-            f"Recommendation: **Water now**"
+    if is_alerting and not was_alerting:
+        print(f"Sending urgent email for {plant}", flush=True)
+        send_email_alert(
+            subject=f"Water alert: {plant}",
+            text_body=(
+                f"{plant} is dry.\n\n"
+                f"Moisture: {moisture:.1f}%\n"
+                f"Recommendation: Water now"
+            ),
         )
 
     alert_state[plant] = is_alerting
@@ -299,12 +283,15 @@ def maybe_send_daily_summary(latest_snapshot):
         if rec == "Water now":
             urgent.append(plant)
 
-    header = f"📅 **Daily Plant Summary** ({now_local.strftime('%Y-%m-%d %I:%M %p')})"
-    if urgent:
-        header += f"\nUrgent: {', '.join(urgent)}"
+    subject = f"Daily Plant Summary - {now_local.strftime('%Y-%m-%d')}"
+    body = f"Daily Plant Summary ({now_local.strftime('%Y-%m-%d %I:%M %p')})\n\n"
 
-    message = header + "\n" + "\n".join(lines)
-    sent = send_discord_message(message)
+    if urgent:
+        body += f"Urgent: {', '.join(urgent)}\n\n"
+
+    body += "\n".join(lines)
+
+    sent = send_email_alert(subject, body)
     if sent:
         last_daily_summary_date = today
 
@@ -425,8 +412,8 @@ def build_settings_panel(rules_dict):
                     },
                 ),
                 html.Button(
-                    "Send Discord Test Message",
-                    id="discord-test-button",
+                    "Send Email Test Message",
+                    id="email-test-button",
                     n_clicks=0,
                     style={
                         "padding": "10px 16px",
@@ -441,7 +428,7 @@ def build_settings_panel(rules_dict):
     )
 
     children.append(html.Div(id="save-rules-status", style={"marginTop": "10px"}))
-    children.append(html.Div(id="discord-test-status", style={"marginTop": "10px"}))
+    children.append(html.Div(id="email-test-status", style={"marginTop": "10px"}))
 
     return html.Div(children)
 
@@ -668,20 +655,23 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
 
 
 @app.callback(
-    Output("discord-test-status", "children"),
-    Input("discord-test-button", "n_clicks"),
+    Output("email-test-status", "children"),
+    Input("email-test-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def send_test_discord_message(n_clicks):
+def send_test_email_message(n_clicks):
     now_local = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
-    ok = send_discord_message(
-        f"🧪 **Soil Monitor Discord Test**\n"
-        f"Time: {now_local}\n"
-        f"If you see this, the webhook is working."
+    ok = send_email_alert(
+        subject="Soil Monitor Email Test",
+        text_body=(
+            f"Soil Monitor test email\n\n"
+            f"Time: {now_local}\n"
+            f"If you received this, email alerts are working."
+        ),
     )
     if ok:
-        return "Discord test message sent."
-    return "Discord test failed or was skipped. Check Render logs."
+        return "Email test message sent."
+    return "Email test failed or was skipped. Check Render logs."
 
 
 @app.callback(
@@ -690,6 +680,8 @@ def send_test_discord_message(n_clicks):
     [Input("refresh", "n_intervals"), Input("plant-rules-store", "data")],
 )
 def update_cards(n, rules_dict):
+    global last_email_sent_at
+
     if not rules_dict:
         rules_dict = DEFAULT_PLANT_RULES
 
@@ -797,27 +789,26 @@ def update_cards(n, rules_dict):
 
     maybe_send_daily_summary(latest_snapshot)
 
-    cooldown_text = "ready"
+    email_text = "ready"
     now_utc = datetime.now(timezone.utc)
-
-    if discord_backoff_until is not None and now_utc < discord_backoff_until:
-        cooldown_text = f"backoff until {discord_backoff_until.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
-    elif last_discord_sent_at is not None:
-        seconds_since = (now_utc - last_discord_sent_at).total_seconds()
-        remaining = max(0, int(DISCORD_MIN_INTERVAL - seconds_since))
+    if last_email_sent_at is not None:
+        seconds_since = (now_utc - last_email_sent_at).total_seconds()
+        remaining = max(0, int(EMAIL_MIN_INTERVAL - seconds_since))
         if remaining > 0:
-            cooldown_text = f"cooldown {remaining}s"
+            email_text = f"cooldown {remaining}s"
 
     status = html.Div(
         [
             html.P(
-                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)} | Discord: {cooldown_text}",
+                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)} | Email: {email_text}",
                 style={
                     "marginBottom": "12px",
                     "padding": "10px 14px",
                     "backgroundColor": "#ffffff",
                     "border": "1px solid #ddd",
-                    "borderRadius": "10px",
+                    "bord
+::contentReference[oaicite:4]{index=4}
+erRadius": "10px",
                     "display": "inline-block",
                 },
             )
