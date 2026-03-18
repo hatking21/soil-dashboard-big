@@ -123,7 +123,9 @@ def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
     }
 
     try:
-        requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=10)
+        resp = requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
+        print(f"Sheets log status for {plant}: {resp.status_code}")
+        print(f"Sheets response: {resp.text}")
     except Exception as e:
         print(f"Failed to log to Google Sheets for {plant}: {e}")
 
