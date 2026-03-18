@@ -39,16 +39,17 @@ LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 # -----------------------------
 SHEETS_LOG_INTERVAL = 300   # 5 min
 MIN_MOISTURE_CHANGE = 2.0   # percent
+NTFY_MIN_INTERVAL = 60      # seconds between notifications
+SENSOR_OFFLINE_MINUTES = 60
 
 last_logged_time = {plant: None for plant in FEEDS}
 last_logged_moisture = {plant: None for plant in FEEDS}
 
 # Notification anti-spam state
 alert_state = {plant: False for plant in FEEDS}
+offline_alert_state = {plant: False for plant in FEEDS}
 last_daily_summary_date = None
 last_ntfy_sent_at = None
-
-NTFY_MIN_INTERVAL = 60  # seconds between notifications
 
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
@@ -229,6 +230,47 @@ def send_ntfy_alert(title, message, priority="default", tags=None):
         return False
 
 
+def is_sensor_offline(timestamp, offline_minutes=SENSOR_OFFLINE_MINUTES):
+    if timestamp is None:
+        return True
+
+    now_utc = datetime.now(timezone.utc)
+    age_seconds = (now_utc - timestamp).total_seconds()
+    return age_seconds > offline_minutes * 60
+
+
+def maybe_send_offline_alert(plant, timestamp):
+    was_offline = offline_alert_state[plant]
+    is_offline = is_sensor_offline(timestamp)
+
+    print(
+        f"offline check | {plant} | timestamp={timestamp} | "
+        f"was_offline={was_offline} | is_offline={is_offline}",
+        flush=True
+    )
+
+    if is_offline and not was_offline:
+        age_text = "unknown"
+        if timestamp is not None:
+            age_minutes = (datetime.now(timezone.utc) - timestamp).total_seconds() / 60.0
+            age_text = f"{age_minutes:.0f} minutes"
+
+        print(f"Sending offline alert for {plant}", flush=True)
+        send_ntfy_alert(
+            title=f"Sensor offline: {plant}",
+            message=(
+                f"No recent sensor update for {plant}.\n\n"
+                f"Last reading age: {age_text}\n"
+                f"Offline threshold: {SENSOR_OFFLINE_MINUTES} minutes"
+            ),
+            priority="high",
+            tags=["warning", "satellite"],
+        )
+
+    offline_alert_state[plant] = is_offline
+    return is_offline
+
+
 def maybe_send_urgent_alert(plant, moisture, recommendation):
     was_alerting = alert_state[plant]
     is_alerting = (recommendation == "Water now")
@@ -270,11 +312,13 @@ def maybe_send_daily_summary(latest_snapshot):
 
     lines = []
     urgent = []
+    offline_plants = []
 
     for plant, entry in latest_snapshot.items():
         moisture = entry.get("moisture")
         temp_f = entry.get("temp_f")
         rec = entry.get("recommendation")
+        offline = entry.get("offline", False)
 
         if moisture is None or temp_f is None:
             line = f"- {plant}: no data"
@@ -283,13 +327,19 @@ def maybe_send_daily_summary(latest_snapshot):
 
         lines.append(line)
 
-        if rec == "Water now":
+        if rec == "Water now" and not offline:
             urgent.append(plant)
+        if offline:
+            offline_plants.append(plant)
 
     body = f"Daily Plant Summary ({now_local.strftime('%Y-%m-%d %I:%M %p')})\n\n"
 
     if urgent:
-        body += f"Urgent: {', '.join(urgent)}\n\n"
+        body += f"Water alerts: {', '.join(urgent)}\n"
+    if offline_plants:
+        body += f"Offline sensors: {', '.join(offline_plants)}\n"
+    if urgent or offline_plants:
+        body += "\n"
 
     body += "\n".join(lines)
 
@@ -333,6 +383,7 @@ def build_settings_panel(rules_dict):
     children = [
         html.H3("Plant Threshold Settings"),
         html.P("These settings are stored in this browser."),
+        html.P(f"Sensor offline threshold: {SENSOR_OFFLINE_MINUTES} minutes"),
     ]
 
     for plant in FEEDS:
@@ -645,7 +696,7 @@ app.layout = html.Div(
     prevent_initial_call=True,
 )
 def save_rules(n_clicks, dry_values, low_values, high_values):
-    global alert_state
+    global alert_state, offline_alert_state
 
     plants = list(FEEDS.keys())
     new_rules = {}
@@ -668,6 +719,7 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
         }
 
     alert_state = {plant: False for plant in FEEDS}
+    offline_alert_state = {plant: False for plant in FEEDS}
 
     return new_rules, "Rules saved in this browser. Alert state reset."
 
@@ -710,6 +762,7 @@ def update_cards(n, rules_dict):
     session = make_session()
     cards = []
     dry_alerts = []
+    offline_alerts = []
     successful_fetches = 0
     refresh_time = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
     latest_snapshot = {}
@@ -735,14 +788,23 @@ def update_cards(n, rules_dict):
                 else None
             )
 
+            offline = maybe_send_offline_alert(plant, ts)
+
             recommendation, rec_color, bg_color = get_watering_recommendation(
                 plant, moisture, rules_dict
             )
+
+            if offline:
+                recommendation = "Sensor offline"
+                rec_color = "#6c757d"
+                bg_color = "#f1f1f1"
 
             latest_snapshot[plant] = {
                 "moisture": moisture,
                 "temp_f": temp_f,
                 "recommendation": recommendation,
+                "offline": offline,
+                "timestamp": ts.isoformat() if ts else None,
             }
 
             if should_log_to_sheets(plant, moisture):
@@ -754,12 +816,24 @@ def update_cards(n, rules_dict):
                     raw,
                 )
 
-            maybe_send_urgent_alert(plant, moisture, recommendation)
+            if not offline:
+                maybe_send_urgent_alert(plant, moisture, recommendation)
+            else:
+                alert_state[plant] = False
 
-            if recommendation == "Water now":
+            if recommendation == "Water now" and not offline:
                 dry_alerts.append(plant)
 
+            if offline:
+                offline_alerts.append(plant)
+
             successful_fetches += 1
+
+            if ts is not None:
+                age_minutes = (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
+                sensor_status_text = f"Reading age: {age_minutes:.0f} min"
+            else:
+                sensor_status_text = "Reading age: unknown"
 
             cards.append([
                 html.Div(
@@ -773,6 +847,10 @@ def update_cards(n, rules_dict):
                             style={"fontWeight": "bold", "color": rec_color},
                         ),
                         html.P(
+                            sensor_status_text,
+                            style={"color": "#666", "fontSize": "0.9rem"},
+                        ),
+                        html.P(
                             f"Last update: {ts.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
                             style={"color": "#666", "fontSize": "0.9rem"},
                         ),
@@ -782,18 +860,22 @@ def update_cards(n, rules_dict):
                         "border": f"2px solid {rec_color}",
                         "borderRadius": "12px",
                         "padding": "14px",
-                        "minHeight": "210px",
+                        "minHeight": "230px",
                     },
                 )
             ])
 
         except Exception as e:
             print(f"Failed latest card fetch for {plant}: {e}", flush=True)
+            offline_alert_state[plant] = True
             latest_snapshot[plant] = {
                 "moisture": None,
                 "temp_f": None,
                 "recommendation": "No data",
+                "offline": True,
+                "timestamp": None,
             }
+            offline_alerts.append(plant)
 
             cards.append([
                 html.Div(
@@ -807,6 +889,10 @@ def update_cards(n, rules_dict):
                             style={"fontWeight": "bold", "color": "#666666"},
                         ),
                         html.P(
+                            "Reading age: unknown",
+                            style={"color": "#666", "fontSize": "0.9rem"},
+                        ),
+                        html.P(
                             "Last update: --",
                             style={"color": "#666", "fontSize": "0.9rem"},
                         ),
@@ -816,7 +902,7 @@ def update_cards(n, rules_dict):
                         "border": "2px solid #cccccc",
                         "borderRadius": "12px",
                         "padding": "14px",
-                        "minHeight": "210px",
+                        "minHeight": "230px",
                     },
                 )
             ])
@@ -847,7 +933,36 @@ def update_cards(n, rules_dict):
         ]
     )
 
-    if dry_alerts:
+    if offline_alerts and dry_alerts:
+        alert_banner = html.Div(
+            [
+                html.Div(f"Offline sensors: {', '.join(offline_alerts)}"),
+                html.Div(f"Water alerts: {', '.join(dry_alerts)}", style={"marginTop": "6px"}),
+            ],
+            style={
+                "backgroundColor": "#fff4e5",
+                "color": "#8a5a00",
+                "border": "1px solid #f0d9a7",
+                "padding": "12px 16px",
+                "borderRadius": "10px",
+                "marginBottom": "16px",
+                "fontWeight": "bold",
+            },
+        )
+    elif offline_alerts:
+        alert_banner = html.Div(
+            f"Offline sensors: {', '.join(offline_alerts)}",
+            style={
+                "backgroundColor": "#f2f2f2",
+                "color": "#555",
+                "border": "1px solid #d6d6d6",
+                "padding": "12px 16px",
+                "borderRadius": "10px",
+                "marginBottom": "16px",
+                "fontWeight": "bold",
+            },
+        )
+    elif dry_alerts:
         alert_banner = html.Div(
             f"Water alert: {', '.join(dry_alerts)}",
             style={
@@ -862,7 +977,7 @@ def update_cards(n, rules_dict):
         )
     else:
         alert_banner = html.Div(
-            "No urgent watering alerts.",
+            "No urgent watering alerts or offline sensors.",
             style={
                 "backgroundColor": "#eef9ee",
                 "color": "#2f6b2f",
