@@ -39,6 +39,17 @@ if not SHEETS_WEBHOOK_URL:
 
 logged_timestamps = {plant: None for plant in FEEDS}
 
+SHEETS_LOG_INTERVAL = 300   # seconds = 5 minutes
+MIN_MOISTURE_CHANGE = 2.0   # percent
+
+last_logged_time = {
+    plant: None for plant in FEEDS
+}
+
+last_logged_moisture = {
+    plant: None for plant in FEEDS
+}
+
 # -----------------------------
 # Plant-specific watering rules
 # -----------------------------
@@ -209,13 +220,30 @@ def refresh_latest_data():
                             "raw": raw,
                             "timestamp": timestamp,
                         }
-
+                
                         plant_history[plant]["time"].append(timestamp)
                         plant_history[plant]["moisture_pct"].append(moisture)
                         plant_history[plant]["temp_f"].append(temp_f)
                         plant_history[plant]["raw"].append(raw)
-
-                        if logged_timestamps[plant] != timestamp:
+                
+                        now = datetime.now(timezone.utc)
+                
+                        last_time = last_logged_time[plant]
+                        last_moisture = last_logged_moisture[plant]
+                
+                        enough_time_passed = (
+                            last_time is None or
+                            (now - last_time).total_seconds() >= SHEETS_LOG_INTERVAL
+                        )
+                
+                        enough_moisture_change = (
+                            last_moisture is None or
+                            abs(moisture - last_moisture) >= MIN_MOISTURE_CHANGE
+                        )
+                
+                        if enough_time_passed and enough_moisture_change:
+                            last_logged_time[plant] = now
+                            last_logged_moisture[plant] = moisture
                             logged_timestamps[plant] = timestamp
                             should_log = True
 
