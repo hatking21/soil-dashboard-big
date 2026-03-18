@@ -43,10 +43,10 @@ if not SHEETS_WEBHOOK_URL:
 # Plant-specific watering rules
 # -----------------------------
 PLANT_RULES = {
-    "Amy Dieffenbachia": {"dry": 30, "ideal_low": 35, "ideal_high": 60},
-    "Peace Lily": {"dry": 35, "ideal_low": 40, "ideal_high": 65},
-    "Periwinkle": {"dry": 25, "ideal_low": 30, "ideal_high": 55},
-    "Rex Begonia": {"dry": 40, "ideal_low": 45, "ideal_high": 70},
+    "Amy Dieffenbachia": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
+    "Peace Lily": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
+    "Periwinkle": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
+    "Rex Begonia": {"dry": 20, "ideal_low": 35, "ideal_high": 80},
 }
 
 # -----------------------------
