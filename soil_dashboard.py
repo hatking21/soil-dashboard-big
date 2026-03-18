@@ -7,7 +7,6 @@ import requests
 from dash import Dash, html, dcc, Input, Output, State, ALL, no_update
 import plotly.graph_objects as go
 
-
 # -----------------------------
 # Adafruit IO settings
 # -----------------------------
@@ -15,10 +14,9 @@ AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
 SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
 
-# Email via Resend
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO")
-ALERT_EMAIL_FROM = os.getenv("ALERT_EMAIL_FROM")
+# ntfy notifications
+NTFY_TOPIC = os.getenv("NTFY_TOPIC")
+NTFY_BASE_URL = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
 
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
@@ -36,7 +34,6 @@ HEADERS = {
 
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 
-
 # -----------------------------
 # Logging / notification settings
 # -----------------------------
@@ -46,26 +43,24 @@ MIN_MOISTURE_CHANGE = 2.0   # percent
 last_logged_time = {plant: None for plant in FEEDS}
 last_logged_moisture = {plant: None for plant in FEEDS}
 
-# Email anti-spam state
+# Notification anti-spam state
 alert_state = {plant: False for plant in FEEDS}
 last_daily_summary_date = None
-last_email_sent_at = None
+last_ntfy_sent_at = None
 
-EMAIL_MIN_INTERVAL = 60  # seconds between email sends
+NTFY_MIN_INTERVAL = 60  # seconds between notifications
 
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
 
-if not RESEND_API_KEY or not ALERT_EMAIL_TO or not ALERT_EMAIL_FROM:
-    print("Warning: Email variables not fully set — email notifications disabled", flush=True)
-
+if not NTFY_TOPIC:
+    print("Warning: NTFY_TOPIC not set — ntfy notifications disabled", flush=True)
 
 # -----------------------------
 # Default plant rules
 # -----------------------------
 DEFAULT_RULE = {"dry": 20, "ideal_low": 35, "ideal_high": 80}
 DEFAULT_PLANT_RULES = {plant: DEFAULT_RULE.copy() for plant in FEEDS}
-
 
 # -----------------------------
 # Helpers
@@ -184,51 +179,53 @@ def should_log_to_sheets(plant, moisture):
     return False
 
 
-def send_email_alert(subject, text_body):
-    global last_email_sent_at
+def send_ntfy_alert(title, message, priority="default", tags=None):
+    global last_ntfy_sent_at
 
-    if not RESEND_API_KEY or not ALERT_EMAIL_TO or not ALERT_EMAIL_FROM:
-        print("Email configuration missing", flush=True)
+    if not NTFY_TOPIC:
+        print("NTFY_TOPIC not set — ntfy notifications disabled", flush=True)
         return False
 
     now = datetime.now(timezone.utc)
-    if last_email_sent_at is not None:
-        seconds_since_last = (now - last_email_sent_at).total_seconds()
-        if seconds_since_last < EMAIL_MIN_INTERVAL:
+    if last_ntfy_sent_at is not None:
+        seconds_since_last = (now - last_ntfy_sent_at).total_seconds()
+        if seconds_since_last < NTFY_MIN_INTERVAL:
             print(
-                f"Email send skipped due to cooldown ({seconds_since_last:.1f}s since last send)",
+                f"ntfy send skipped due to cooldown ({seconds_since_last:.1f}s since last send)",
                 flush=True
             )
             return False
 
+    url = f"{NTFY_BASE_URL.rstrip('/')}/{NTFY_TOPIC}"
+
+    headers = {
+        "Title": title,
+        "Priority": priority,
+    }
+
+    if tags:
+        headers["Tags"] = ",".join(tags)
+
     try:
         resp = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": ALERT_EMAIL_FROM,
-                "to": [ALERT_EMAIL_TO],
-                "subject": subject,
-                "text": text_body,
-            },
+            url,
+            data=message.encode("utf-8"),
+            headers=headers,
             timeout=20,
         )
 
-        print(f"Email status: {resp.status_code}", flush=True)
-        print(f"Email response: {resp.text}", flush=True)
+        print(f"ntfy status: {resp.status_code}", flush=True)
+        print(f"ntfy response: {resp.text}", flush=True)
 
         if resp.status_code >= 400:
-            print(f"Email send failed: {resp.status_code} {resp.text}", flush=True)
+            print(f"ntfy send failed: {resp.status_code} {resp.text}", flush=True)
             return False
 
-        last_email_sent_at = now
+        last_ntfy_sent_at = now
         return True
 
     except Exception as e:
-        print(f"Failed to send email: {e}", flush=True)
+        print(f"Failed to send ntfy notification: {e}", flush=True)
         return False
 
 
@@ -237,21 +234,23 @@ def maybe_send_urgent_alert(plant, moisture, recommendation):
     is_alerting = (recommendation == "Water now")
 
     print(
-        f"Email check | {plant} | moisture={moisture} | "
+        f"ntfy check | {plant} | moisture={moisture} | "
         f"recommendation={recommendation} | was_alerting={was_alerting} | "
         f"is_alerting={is_alerting}",
         flush=True
     )
 
     if is_alerting and not was_alerting:
-        print(f"Sending urgent email for {plant}", flush=True)
-        send_email_alert(
-            subject=f"Water alert: {plant}",
-            text_body=(
+        print(f"Sending ntfy urgent alert for {plant}", flush=True)
+        send_ntfy_alert(
+            title=f"Water alert: {plant}",
+            message=(
                 f"{plant} is dry.\n\n"
                 f"Moisture: {moisture:.1f}%\n"
                 f"Recommendation: Water now"
             ),
+            priority="high",
+            tags=["warning", "seedling"],
         )
 
     alert_state[plant] = is_alerting
@@ -287,7 +286,6 @@ def maybe_send_daily_summary(latest_snapshot):
         if rec == "Water now":
             urgent.append(plant)
 
-    subject = f"Daily Plant Summary - {now_local.strftime('%Y-%m-%d')}"
     body = f"Daily Plant Summary ({now_local.strftime('%Y-%m-%d %I:%M %p')})\n\n"
 
     if urgent:
@@ -295,7 +293,13 @@ def maybe_send_daily_summary(latest_snapshot):
 
     body += "\n".join(lines)
 
-    sent = send_email_alert(subject, body)
+    sent = send_ntfy_alert(
+        title=f"Daily Plant Summary - {now_local.strftime('%Y-%m-%d')}",
+        message=body,
+        priority="default",
+        tags=["seedling"],
+    )
+
     if sent:
         last_daily_summary_date = today
 
@@ -416,8 +420,8 @@ def build_settings_panel(rules_dict):
                     },
                 ),
                 html.Button(
-                    "Send Email Test Message",
-                    id="email-test-button",
+                    "Send ntfy Test Message",
+                    id="ntfy-test-button",
                     n_clicks=0,
                     style={
                         "padding": "10px 16px",
@@ -432,10 +436,9 @@ def build_settings_panel(rules_dict):
     )
 
     children.append(html.Div(id="save-rules-status", style={"marginTop": "10px"}))
-    children.append(html.Div(id="email-test-status", style={"marginTop": "10px"}))
+    children.append(html.Div(id="ntfy-test-status", style={"marginTop": "10px"}))
 
     return html.Div(children)
-
 
 # -----------------------------
 # Figure builders
@@ -583,7 +586,6 @@ def build_monthly_figures(session, rules_dict):
 
     return monthly_moisture_fig, monthly_temp_fig
 
-
 # -----------------------------
 # Dash app
 # -----------------------------
@@ -671,23 +673,29 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
 
 
 @app.callback(
-    Output("email-test-status", "children"),
-    Input("email-test-button", "n_clicks"),
+    Output("ntfy-test-status", "children"),
+    Input("ntfy-test-button", "n_clicks"),
     prevent_initial_call=True,
 )
-def send_test_email_message(n_clicks):
+def send_test_ntfy_message(n_clicks):
+    if not NTFY_TOPIC:
+        return "ntfy is not configured. Add NTFY_TOPIC in Render."
+
     now_local = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
-    ok = send_email_alert(
-        subject="Soil Monitor Email Test",
-        text_body=(
-            f"Soil Monitor test email\n\n"
+    ok = send_ntfy_alert(
+        title="Soil Monitor Test",
+        message=(
+            f"Soil Monitor test notification\n\n"
             f"Time: {now_local}\n"
-            f"If you received this, email alerts are working."
+            f"If you received this, ntfy alerts are working."
         ),
+        priority="default",
+        tags=["white_check_mark", "seedling"],
     )
+
     if ok:
-        return "Email test message sent."
-    return "Email test failed or was skipped. Check Render logs."
+        return "ntfy test notification sent."
+    return "ntfy test failed. Check Render logs."
 
 
 @app.callback(
@@ -696,8 +704,6 @@ def send_test_email_message(n_clicks):
     [Input("refresh", "n_intervals"), Input("plant-rules-store", "data")],
 )
 def update_cards(n, rules_dict):
-    global last_email_sent_at
-
     if not rules_dict:
         rules_dict = DEFAULT_PLANT_RULES
 
@@ -817,18 +823,18 @@ def update_cards(n, rules_dict):
 
     maybe_send_daily_summary(latest_snapshot)
 
-    email_text = "ready"
+    notify_text = "ready"
     now_utc = datetime.now(timezone.utc)
-    if last_email_sent_at is not None:
-        seconds_since = (now_utc - last_email_sent_at).total_seconds()
-        remaining = max(0, int(EMAIL_MIN_INTERVAL - seconds_since))
+    if last_ntfy_sent_at is not None:
+        seconds_since = (now_utc - last_ntfy_sent_at).total_seconds()
+        remaining = max(0, int(NTFY_MIN_INTERVAL - seconds_since))
         if remaining > 0:
-            email_text = f"cooldown {remaining}s"
+            notify_text = f"cooldown {remaining}s"
 
     status = html.Div(
         [
             html.P(
-                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)} | Email: {email_text}",
+                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)} | Notifications: {notify_text}",
                 style={
                     "marginBottom": "12px",
                     "padding": "10px 14px",
