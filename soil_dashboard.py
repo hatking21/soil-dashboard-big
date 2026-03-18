@@ -48,6 +48,12 @@ last_daily_summary_date = None
 # set DISCORD_FORCE_ALERTS=true in Render to send urgent alerts every refresh while in Water now
 DISCORD_FORCE_ALERTS = os.getenv("DISCORD_FORCE_ALERTS", "false").lower() == "true"
 
+# Discord cooldown / backoff
+DISCORD_MIN_INTERVAL = 300  # 5 minutes between Discord sends
+DISCORD_BACKOFF_MINUTES = 30
+last_discord_sent_at = None
+discord_backoff_until = None
+
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
 
@@ -178,9 +184,29 @@ def should_log_to_sheets(plant, moisture):
 
 
 def send_discord_message(content):
+    global last_discord_sent_at, discord_backoff_until
+
     if not DISCORD_WEBHOOK_URL:
         print("Discord webhook URL missing", flush=True)
         return False
+
+    now = datetime.now(timezone.utc)
+
+    if discord_backoff_until is not None and now < discord_backoff_until:
+        print(
+            f"Discord send skipped due to backoff until {discord_backoff_until.isoformat()}",
+            flush=True
+        )
+        return False
+
+    if last_discord_sent_at is not None:
+        seconds_since_last = (now - last_discord_sent_at).total_seconds()
+        if seconds_since_last < DISCORD_MIN_INTERVAL:
+            print(
+                f"Discord send skipped due to cooldown ({seconds_since_last:.1f}s since last send)",
+                flush=True
+            )
+            return False
 
     try:
         resp = requests.post(
@@ -188,14 +214,26 @@ def send_discord_message(content):
             json={"content": content},
             timeout=15,
         )
+
         print(f"Discord status: {resp.status_code}", flush=True)
         print(f"Discord response: {resp.text}", flush=True)
+
+        if resp.status_code == 429:
+            discord_backoff_until = now + timedelta(minutes=DISCORD_BACKOFF_MINUTES)
+            print(
+                f"Discord rate limited. Backing off until {discord_backoff_until.isoformat()}",
+                flush=True
+            )
+            return False
 
         if resp.status_code >= 400:
             print(f"Discord webhook failed: {resp.status_code} {resp.text}", flush=True)
             return False
 
+        last_discord_sent_at = now
+        discord_backoff_until = None
         return True
+
     except Exception as e:
         print(f"Failed to send Discord message: {e}", flush=True)
         return False
@@ -266,8 +304,9 @@ def maybe_send_daily_summary(latest_snapshot):
         header += f"\nUrgent: {', '.join(urgent)}"
 
     message = header + "\n" + "\n".join(lines)
-    send_discord_message(message)
-    last_daily_summary_date = today
+    sent = send_discord_message(message)
+    if sent:
+        last_daily_summary_date = today
 
 
 def add_ideal_band(fig, plant, rules_dict):
@@ -623,7 +662,6 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
             "ideal_high": high,
         }
 
-    # Reset alert state so new rules can trigger fresh urgent alerts
     alert_state = {plant: False for plant in FEEDS}
 
     return new_rules, "Rules saved in this browser. Alert state reset."
@@ -643,7 +681,7 @@ def send_test_discord_message(n_clicks):
     )
     if ok:
         return "Discord test message sent."
-    return "Discord test failed. Check Render logs."
+    return "Discord test failed or was skipped. Check Render logs."
 
 
 @app.callback(
@@ -759,10 +797,21 @@ def update_cards(n, rules_dict):
 
     maybe_send_daily_summary(latest_snapshot)
 
+    cooldown_text = "ready"
+    now_utc = datetime.now(timezone.utc)
+
+    if discord_backoff_until is not None and now_utc < discord_backoff_until:
+        cooldown_text = f"backoff until {discord_backoff_until.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
+    elif last_discord_sent_at is not None:
+        seconds_since = (now_utc - last_discord_sent_at).total_seconds()
+        remaining = max(0, int(DISCORD_MIN_INTERVAL - seconds_since))
+        if remaining > 0:
+            cooldown_text = f"cooldown {remaining}s"
+
     status = html.Div(
         [
             html.P(
-                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)}",
+                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)} | Discord: {cooldown_text}",
                 style={
                     "marginBottom": "12px",
                     "padding": "10px 14px",
