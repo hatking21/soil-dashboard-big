@@ -29,17 +29,13 @@ HEADERS = {
     "X-AIO-Key": AIO_KEY,
 }
 
-# Reuse HTTP connections
-session = requests.Session()
-session.headers.update(HEADERS)
-
 # -----------------------------
 # Google Sheets backup
 # -----------------------------
 SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
 
 if not SHEETS_WEBHOOK_URL:
-    print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled")
+    print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
 
 logged_timestamps = {plant: None for plant in FEEDS}
 
@@ -71,7 +67,7 @@ latest_data = {
 }
 
 weekly_cache = {
-    plant: {"time": [], "moisture": [], "temp": []}
+    plant: {"time_moisture": [], "moisture": [], "time_temp": [], "temp": []}
     for plant in FEEDS
 }
 
@@ -81,26 +77,33 @@ monthly_cache = {
 }
 
 data_lock = threading.Lock()
+threads_started = False
+
+
+def make_session():
+    s = requests.Session()
+    s.headers.update(HEADERS)
+    return s
 
 # -----------------------------
 # Adafruit IO fetch helpers
 # -----------------------------
-def fetch_latest_feed_value(feed_key):
+def fetch_latest_feed_value(feed_key, session):
     url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data/last"
     resp = session.get(url, timeout=10)
     resp.raise_for_status()
     return resp.json()
 
 
-def fetch_feed_history(feed_key, limit=1000):
+def fetch_feed_history(feed_key, session, limit=1000):
     url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data"
     resp = session.get(url, params={"limit": limit}, timeout=20)
     resp.raise_for_status()
     return resp.json()
 
 
-def get_history_for_days(feed_key, days, limit=1000):
-    entries = fetch_feed_history(feed_key, limit=limit)
+def get_history_for_days(feed_key, session, days, limit=1000):
+    entries = fetch_feed_history(feed_key, session, limit=limit)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     times = []
@@ -150,9 +153,9 @@ def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
 
     try:
         resp = requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
-        print(f"Sheets log status for {plant}: {resp.status_code}")
+        print(f"Sheets log status for {plant}: {resp.status_code}", flush=True)
     except Exception as e:
-        print(f"Failed to log to Google Sheets for {plant}: {e}")
+        print(f"Failed to log to Google Sheets for {plant}: {e}", flush=True)
 
 
 def get_watering_recommendation(plant, moisture):
@@ -174,10 +177,13 @@ def get_watering_recommendation(plant, moisture):
 # Background refresh workers
 # -----------------------------
 def refresh_latest_data():
+    print("Starting latest-data thread", flush=True)
+    session = make_session()
+
     while True:
         for plant, feed_key in FEEDS.items():
             try:
-                feed_data = fetch_latest_feed_value(feed_key)
+                feed_data = fetch_latest_feed_value(feed_key, session)
                 payload_text = feed_data["value"]
                 created_at = feed_data.get("created_at")
 
@@ -214,19 +220,23 @@ def refresh_latest_data():
                             should_log = True
 
                 if should_log:
+                    print(f"New live reading for {plant}: {moisture:.1f}% {temp_f:.2f}F", flush=True)
                     log_to_google_sheets(timestamp, plant, moisture, temp_f, raw)
 
             except Exception as e:
-                print(f"Failed latest refresh for {plant}: {e}")
+                print(f"Failed latest refresh for {plant}: {e}", flush=True)
 
         time.sleep(10)
 
 
 def refresh_history_data():
+    print("Starting history-data thread", flush=True)
+    session = make_session()
+
     while True:
         for plant, feed_key in FEEDS.items():
             try:
-                times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=7, limit=1000)
+                times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=7, limit=1000)
                 ds_times_week_m, ds_moisture_week = downsample_data(times, moisture_vals, step=2)
                 ds_times_week_t, ds_temp_week = downsample_data(times, temp_vals, step=2)
 
@@ -238,10 +248,10 @@ def refresh_history_data():
                         "temp": ds_temp_week,
                     }
             except Exception as e:
-                print(f"Failed weekly refresh for {plant}: {e}")
+                print(f"Failed weekly refresh for {plant}: {e}", flush=True)
 
             try:
-                times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=30, limit=1000)
+                times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=30, limit=1000)
                 ds_times_month_m, ds_moisture_month = downsample_data(times, moisture_vals, step=10)
                 ds_times_month_t, ds_temp_month = downsample_data(times, temp_vals, step=10)
 
@@ -253,9 +263,20 @@ def refresh_history_data():
                         "temp": ds_temp_month,
                     }
             except Exception as e:
-                print(f"Failed monthly refresh for {plant}: {e}")
+                print(f"Failed monthly refresh for {plant}: {e}", flush=True)
 
+        print("History cache refreshed", flush=True)
         time.sleep(600)
+
+
+def start_background_threads():
+    global threads_started
+    if threads_started:
+        return
+
+    threads_started = True
+    threading.Thread(target=refresh_latest_data, daemon=True).start()
+    threading.Thread(target=refresh_history_data, daemon=True).start()
 
 # -----------------------------
 # Dash app
@@ -505,9 +526,7 @@ def update_history_graphs(n):
 
 
 # Start background refresh workers once
-threading.Thread(target=refresh_latest_data, daemon=True).start()
-threading.Thread(target=refresh_history_data, daemon=True).start()
-
+start_background_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
