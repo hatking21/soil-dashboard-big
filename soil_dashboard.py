@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 # -----------------------------
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
+SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
 
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
@@ -25,6 +26,18 @@ FEEDS = {
 HEADERS = {
     "X-AIO-Key": AIO_KEY,
 }
+
+# -----------------------------
+# Logging settings
+# -----------------------------
+SHEETS_LOG_INTERVAL = 300   # seconds = 5 min
+MIN_MOISTURE_CHANGE = 2.0   # percent
+
+last_logged_time = {plant: None for plant in FEEDS}
+last_logged_moisture = {plant: None for plant in FEEDS}
+
+if not SHEETS_WEBHOOK_URL:
+    print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
 
 # -----------------------------
 # Plant-specific watering rules
@@ -98,18 +111,70 @@ def downsample_data(times, values, step=5):
 
 def get_watering_recommendation(plant, moisture):
     if moisture is None:
-        return "No data", "#666666"
+        return "No data", "#666666", "#f4f4f4"
 
     rules = PLANT_RULES[plant]
 
     if moisture < rules["dry"]:
-        return "Water now", "#d9534f"
+        return "Water now", "#d9534f", "#fff1f0"
     elif moisture < rules["ideal_low"]:
-        return "Check soon", "#f0ad4e"
+        return "Check soon", "#f0ad4e", "#fff8e8"
     elif moisture <= rules["ideal_high"]:
-        return "Moisture looks good", "#5cb85c"
+        return "Moisture looks good", "#5cb85c", "#f1fff1"
     else:
-        return "Wet / hold off", "#5bc0de"
+        return "Wet / hold off", "#5bc0de", "#eefbff"
+
+
+def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
+    if not SHEETS_WEBHOOK_URL:
+        return
+
+    payload = {
+        "timestamp": timestamp.isoformat(),
+        "plant": plant,
+        "moisture_pct": moisture,
+        "temp_f": temp_f,
+        "raw": raw,
+    }
+
+    try:
+        resp = requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
+        print(f"Sheets log status for {plant}: {resp.status_code}", flush=True)
+    except Exception as e:
+        print(f"Failed to log to Google Sheets for {plant}: {e}", flush=True)
+
+
+def should_log_to_sheets(plant, moisture):
+    now = datetime.now(timezone.utc)
+    last_time = last_logged_time[plant]
+    last_m = last_logged_moisture[plant]
+
+    enough_time = (
+        last_time is None or
+        (now - last_time).total_seconds() >= SHEETS_LOG_INTERVAL
+    )
+
+    enough_change = (
+        last_m is None or
+        abs(moisture - last_m) >= MIN_MOISTURE_CHANGE
+    )
+
+    if enough_time and enough_change:
+        last_logged_time[plant] = now
+        last_logged_moisture[plant] = moisture
+        return True
+
+    return False
+
+
+def add_ideal_band(fig, plant):
+    rules = PLANT_RULES[plant]
+    fig.add_hrect(
+        y0=rules["ideal_low"],
+        y1=rules["ideal_high"],
+        fillcolor="rgba(92,184,92,0.10)",
+        line_width=0,
+    )
 
 
 def make_card(plant):
@@ -126,10 +191,14 @@ def make_card(plant):
         },
     )
 
-
+# -----------------------------
+# Figure builders
+# -----------------------------
 def build_live_figures(session):
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
+
+    added_moisture_band = False
 
     for plant, feed_key in FEEDS.items():
         try:
@@ -153,6 +222,11 @@ def build_live_figures(session):
                         name=plant,
                     )
                 )
+
+                if not added_moisture_band:
+                    add_ideal_band(moisture_fig, plant)
+                    added_moisture_band = True
+
         except Exception as e:
             print(f"Failed live history for {plant}: {e}", flush=True)
 
@@ -179,6 +253,8 @@ def build_weekly_figures(session):
     weekly_moisture_fig = go.Figure()
     weekly_temp_fig = go.Figure()
 
+    added_band = False
+
     for plant, feed_key in FEEDS.items():
         try:
             times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=7, limit=1000)
@@ -195,6 +271,10 @@ def build_weekly_figures(session):
                         name=plant,
                     )
                 )
+
+                if not added_band:
+                    add_ideal_band(weekly_moisture_fig, plant)
+                    added_band = True
 
             if times_t:
                 weekly_temp_fig.add_trace(
@@ -232,6 +312,8 @@ def build_monthly_figures(session):
     monthly_moisture_fig = go.Figure()
     monthly_temp_fig = go.Figure()
 
+    added_band = False
+
     for plant, feed_key in FEEDS.items():
         try:
             times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=30, limit=1000)
@@ -248,6 +330,10 @@ def build_monthly_figures(session):
                         name=plant,
                     )
                 )
+
+                if not added_band:
+                    add_ideal_band(monthly_moisture_fig, plant)
+                    added_band = True
 
             if times_t:
                 monthly_temp_fig.add_trace(
@@ -280,7 +366,6 @@ def build_monthly_figures(session):
 
     return monthly_moisture_fig, monthly_temp_fig
 
-
 # -----------------------------
 # Dash app
 # -----------------------------
@@ -294,7 +379,8 @@ app.layout = html.Div(
     style={"fontFamily": "Arial, sans-serif", "padding": "20px", "backgroundColor": "#f7f7f7"},
     children=[
         html.H1("Plant Soil Monitor"),
-        html.P("Live readings from Adafruit IO"),
+        html.Div(id="system-status"),
+        html.Div(id="alert-banner"),
 
         dcc.Interval(id="refresh", interval=30000, n_intervals=0),
 
@@ -319,12 +405,16 @@ app.layout = html.Div(
 
 
 @app.callback(
-    [Output(f"card-{plant}", "children") for plant in plant_names],
+    [Output(f"card-{plant}", "children") for plant in plant_names]
+    + [Output("system-status", "children"), Output("alert-banner", "children")],
     Input("refresh", "n_intervals"),
 )
 def update_cards(n):
     session = make_session()
     cards = []
+    dry_alerts = []
+    successful_fetches = 0
+    refresh_time = datetime.now().astimezone().strftime("%Y-%m-%d %I:%M:%S %p")
 
     for plant, feed_key in FEEDS.items():
         try:
@@ -343,41 +433,114 @@ def update_cards(n):
                 else None
             )
 
-            recommendation, rec_color = get_watering_recommendation(plant, moisture)
+            recommendation, rec_color, bg_color = get_watering_recommendation(plant, moisture)
+
+            if should_log_to_sheets(plant, moisture):
+                log_to_google_sheets(ts or datetime.now(timezone.utc), plant, moisture, temp_f, raw)
+
+            if recommendation == "Water now":
+                dry_alerts.append(plant)
+
+            successful_fetches += 1
 
             cards.append([
-                html.H3(plant, style={"marginTop": "0"}),
-                html.P(f"Moisture: {moisture:.1f} %"),
-                html.P(f"Temperature: {temp_f:.2f} °F"),
-                html.P(f"Raw: {raw}"),
-                html.P(
-                    f"Recommendation: {recommendation}",
-                    style={"fontWeight": "bold", "color": rec_color}
-                ),
-                html.P(
-                    f"Last update: {ts.astimezone().strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
-                    style={"color": "#666", "fontSize": "0.9rem"},
-                ),
+                html.Div(
+                    [
+                        html.H3(plant, style={"marginTop": "0"}),
+                        html.P(f"Moisture: {moisture:.1f} %"),
+                        html.P(f"Temperature: {temp_f:.2f} °F"),
+                        html.P(f"Raw: {raw}"),
+                        html.P(
+                            f"Recommendation: {recommendation}",
+                            style={"fontWeight": "bold", "color": rec_color}
+                        ),
+                        html.P(
+                            f"Last update: {ts.astimezone().strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
+                            style={"color": "#666", "fontSize": "0.9rem"},
+                        ),
+                    ],
+                    style={
+                        "backgroundColor": bg_color,
+                        "border": f"2px solid {rec_color}",
+                        "borderRadius": "12px",
+                        "padding": "14px",
+                        "minHeight": "210px",
+                    },
+                )
             ])
 
         except Exception as e:
             print(f"Failed latest card fetch for {plant}: {e}", flush=True)
             cards.append([
-                html.H3(plant, style={"marginTop": "0"}),
-                html.P("Moisture: --"),
-                html.P("Temperature: --"),
-                html.P("Raw: --"),
-                html.P(
-                    "Recommendation: No data",
-                    style={"fontWeight": "bold", "color": "#666666"}
-                ),
-                html.P(
-                    "Last update: --",
-                    style={"color": "#666", "fontSize": "0.9rem"},
-                ),
+                html.Div(
+                    [
+                        html.H3(plant, style={"marginTop": "0"}),
+                        html.P("Moisture: --"),
+                        html.P("Temperature: --"),
+                        html.P("Raw: --"),
+                        html.P(
+                            "Recommendation: No data",
+                            style={"fontWeight": "bold", "color": "#666666"}
+                        ),
+                        html.P(
+                            "Last update: --",
+                            style={"color": "#666", "fontSize": "0.9rem"},
+                        ),
+                    ],
+                    style={
+                        "backgroundColor": "#f5f5f5",
+                        "border": "2px solid #cccccc",
+                        "borderRadius": "12px",
+                        "padding": "14px",
+                        "minHeight": "210px",
+                    },
+                )
             ])
 
-    return cards
+    status = html.Div(
+        [
+            html.P(
+                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)}",
+                style={
+                    "marginBottom": "12px",
+                    "padding": "10px 14px",
+                    "backgroundColor": "#ffffff",
+                    "border": "1px solid #ddd",
+                    "borderRadius": "10px",
+                    "display": "inline-block",
+                },
+            )
+        ]
+    )
+
+    if dry_alerts:
+        alert_banner = html.Div(
+            f"Water alert: {', '.join(dry_alerts)}",
+            style={
+                "backgroundColor": "#ffeaea",
+                "color": "#a94442",
+                "border": "1px solid #ebccd1",
+                "padding": "12px 16px",
+                "borderRadius": "10px",
+                "marginBottom": "16px",
+                "fontWeight": "bold",
+            },
+        )
+    else:
+        alert_banner = html.Div(
+            "No urgent watering alerts.",
+            style={
+                "backgroundColor": "#eef9ee",
+                "color": "#2f6b2f",
+                "border": "1px solid #cfe9cf",
+                "padding": "12px 16px",
+                "borderRadius": "10px",
+                "marginBottom": "16px",
+                "fontWeight": "bold",
+            },
+        )
+
+    return cards + [status, alert_banner]
 
 
 @app.callback(
