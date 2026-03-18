@@ -27,6 +27,29 @@ HEADERS = {
     "X-AIO-Key": AIO_KEY,
 }
 
+# -----------------------------
+# Google Sheets backup
+# -----------------------------
+# You can replace this later with:
+# SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
+SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
+
+if not SHEETS_WEBHOOK_URL:
+    print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled")
+    
+# Prevent duplicate sheet writes for the same reading
+logged_timestamps = {plant: None for plant in FEEDS}
+
+# -----------------------------
+# Plant-specific watering rules
+# -----------------------------
+PLANT_RULES = {
+    "Amy Dieffenbachia": {"dry": 30, "ideal_low": 35, "ideal_high": 60},
+    "Peace Lily": {"dry": 35, "ideal_low": 40, "ideal_high": 65},
+    "Periwinkle": {"dry": 25, "ideal_low": 30, "ideal_high": 55},
+    "Rex Begonia": {"dry": 40, "ideal_low": 45, "ideal_high": 70},
+}
+
 MAX_POINTS = 500
 
 plant_history = defaultdict(lambda: {
@@ -64,7 +87,6 @@ def get_history_for_days(feed_key, days, limit=1000):
     moisture_vals = []
     temp_vals = []
 
-    # Adafruit IO usually returns newest first, so reverse to plot oldest -> newest
     for entry in reversed(entries):
         created_at = entry.get("created_at")
         value = entry.get("value")
@@ -86,6 +108,40 @@ def get_history_for_days(feed_key, days, limit=1000):
             temp_vals.append(temp_f)
 
     return times, moisture_vals, temp_vals
+
+
+def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
+    if not SHEETS_WEBHOOK_URL:
+        return
+
+    payload = {
+        "timestamp": timestamp.isoformat(),
+        "plant": plant,
+        "moisture_pct": moisture,
+        "temp_f": temp_f,
+        "raw": raw,
+    }
+
+    try:
+        requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Failed to log to Google Sheets for {plant}: {e}")
+
+
+def get_watering_recommendation(plant, moisture):
+    if moisture is None:
+        return "No data", "#666666"
+
+    rules = PLANT_RULES[plant]
+
+    if moisture < rules["dry"]:
+        return "Water now", "#d9534f"
+    elif moisture < rules["ideal_low"]:
+        return "Check soon", "#f0ad4e"
+    elif moisture <= rules["ideal_high"]:
+        return "Moisture looks good", "#5cb85c"
+    else:
+        return "Wet / hold off", "#5bc0de"
 
 
 app = Dash(__name__)
@@ -183,6 +239,11 @@ def update_dashboard(n):
                 plant_history[plant]["temp_f"].append(temp_f)
                 plant_history[plant]["raw"].append(raw)
 
+                # Backup to Google Sheets once per new reading
+                if logged_timestamps[plant] != timestamp:
+                    log_to_google_sheets(timestamp, plant, moisture, temp_f, raw)
+                    logged_timestamps[plant] = timestamp
+
         except Exception as e:
             print(f"Failed to fetch latest value for {plant}: {e}")
 
@@ -197,11 +258,17 @@ def update_dashboard(n):
         raw = entry.get("raw")
         ts = entry.get("timestamp")
 
+        recommendation, rec_color = get_watering_recommendation(plant, moisture)
+
         cards.append([
             html.H3(plant, style={"marginTop": "0"}),
             html.P(f"Moisture: {moisture:.1f} %" if moisture is not None else "Moisture: --"),
             html.P(f"Temperature: {temp_f:.2f} °F" if temp_f is not None else "Temperature: --"),
             html.P(f"Raw: {raw}" if raw is not None else "Raw: --"),
+            html.P(
+                f"Recommendation: {recommendation}",
+                style={"fontWeight": "bold", "color": rec_color}
+            ),
             html.P(
                 f"Last update: {ts.astimezone().strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
                 style={"color": "#666", "fontSize": "0.9rem"},
