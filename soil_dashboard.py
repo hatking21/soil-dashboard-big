@@ -1,5 +1,7 @@
 import os
 import json
+import time
+import threading
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
@@ -27,6 +29,10 @@ HEADERS = {
     "X-AIO-Key": AIO_KEY,
 }
 
+# Reuse HTTP connections
+session = requests.Session()
+session.headers.update(HEADERS)
+
 # -----------------------------
 # Google Sheets backup
 # -----------------------------
@@ -35,7 +41,6 @@ SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
 if not SHEETS_WEBHOOK_URL:
     print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled")
 
-# Prevent duplicate sheet writes for the same reading
 logged_timestamps = {plant: None for plant in FEEDS}
 
 # -----------------------------
@@ -48,6 +53,9 @@ PLANT_RULES = {
     "Rex Begonia": {"dry": 40, "ideal_low": 45, "ideal_high": 70},
 }
 
+# -----------------------------
+# In-memory data stores
+# -----------------------------
 MAX_POINTS = 500
 
 plant_history = defaultdict(lambda: {
@@ -62,28 +70,31 @@ latest_data = {
     for plant in FEEDS
 }
 
-# Cached historical data for faster dashboard loads
 weekly_cache = {
     plant: {"time": [], "moisture": [], "temp": []}
     for plant in FEEDS
 }
 
 monthly_cache = {
-    plant: {"time": [], "moisture": [], "temp": []}
+    plant: {"time_moisture": [], "moisture": [], "time_temp": [], "temp": []}
     for plant in FEEDS
 }
 
+data_lock = threading.Lock()
 
+# -----------------------------
+# Adafruit IO fetch helpers
+# -----------------------------
 def fetch_latest_feed_value(feed_key):
     url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data/last"
-    resp = requests.get(url, headers=HEADERS, timeout=10)
+    resp = session.get(url, timeout=10)
     resp.raise_for_status()
     return resp.json()
 
 
 def fetch_feed_history(feed_key, limit=1000):
     url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data"
-    resp = requests.get(url, headers=HEADERS, params={"limit": limit}, timeout=15)
+    resp = session.get(url, params={"limit": limit}, timeout=20)
     resp.raise_for_status()
     return resp.json()
 
@@ -140,7 +151,6 @@ def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
     try:
         resp = requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
         print(f"Sheets log status for {plant}: {resp.status_code}")
-        print(f"Sheets response: {resp.text}")
     except Exception as e:
         print(f"Failed to log to Google Sheets for {plant}: {e}")
 
@@ -160,7 +170,96 @@ def get_watering_recommendation(plant, moisture):
     else:
         return "Wet / hold off", "#5bc0de"
 
+# -----------------------------
+# Background refresh workers
+# -----------------------------
+def refresh_latest_data():
+    while True:
+        for plant, feed_key in FEEDS.items():
+            try:
+                feed_data = fetch_latest_feed_value(feed_key)
+                payload_text = feed_data["value"]
+                created_at = feed_data.get("created_at")
 
+                payload = json.loads(payload_text)
+                moisture = float(payload.get("moisture_pct"))
+                temp_f = float(payload.get("temp_f"))
+                raw = int(payload.get("raw"))
+
+                timestamp = (
+                    datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    if created_at
+                    else datetime.now(timezone.utc)
+                )
+
+                should_log = False
+
+                with data_lock:
+                    previous_ts = latest_data[plant]["timestamp"]
+                    if previous_ts != timestamp:
+                        latest_data[plant] = {
+                            "moisture_pct": moisture,
+                            "temp_f": temp_f,
+                            "raw": raw,
+                            "timestamp": timestamp,
+                        }
+
+                        plant_history[plant]["time"].append(timestamp)
+                        plant_history[plant]["moisture_pct"].append(moisture)
+                        plant_history[plant]["temp_f"].append(temp_f)
+                        plant_history[plant]["raw"].append(raw)
+
+                        if logged_timestamps[plant] != timestamp:
+                            logged_timestamps[plant] = timestamp
+                            should_log = True
+
+                if should_log:
+                    log_to_google_sheets(timestamp, plant, moisture, temp_f, raw)
+
+            except Exception as e:
+                print(f"Failed latest refresh for {plant}: {e}")
+
+        time.sleep(10)
+
+
+def refresh_history_data():
+    while True:
+        for plant, feed_key in FEEDS.items():
+            try:
+                times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=7, limit=1000)
+                ds_times_week_m, ds_moisture_week = downsample_data(times, moisture_vals, step=2)
+                ds_times_week_t, ds_temp_week = downsample_data(times, temp_vals, step=2)
+
+                with data_lock:
+                    weekly_cache[plant] = {
+                        "time_moisture": ds_times_week_m,
+                        "moisture": ds_moisture_week,
+                        "time_temp": ds_times_week_t,
+                        "temp": ds_temp_week,
+                    }
+            except Exception as e:
+                print(f"Failed weekly refresh for {plant}: {e}")
+
+            try:
+                times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=30, limit=1000)
+                ds_times_month_m, ds_moisture_month = downsample_data(times, moisture_vals, step=10)
+                ds_times_month_t, ds_temp_month = downsample_data(times, temp_vals, step=10)
+
+                with data_lock:
+                    monthly_cache[plant] = {
+                        "time_moisture": ds_times_month_m,
+                        "moisture": ds_moisture_month,
+                        "time_temp": ds_times_month_t,
+                        "temp": ds_temp_month,
+                    }
+            except Exception as e:
+                print(f"Failed monthly refresh for {plant}: {e}")
+
+        time.sleep(600)
+
+# -----------------------------
+# Dash app
+# -----------------------------
 app = Dash(__name__)
 server = app.server
 app.title = "Soil Monitor Dashboard"
@@ -189,10 +288,7 @@ app.layout = html.Div(
         html.H1("Plant Soil Monitor"),
         html.P("Live readings from Adafruit IO"),
 
-        # Fast refresh for cards + live graphs
         dcc.Interval(id="live-refresh", interval=10000, n_intervals=0),
-
-        # Slower refresh for weekly/monthly history
         dcc.Interval(id="history-refresh", interval=300000, n_intervals=0),
 
         html.Div(
@@ -223,54 +319,21 @@ app.layout = html.Div(
     Input("live-refresh", "n_intervals"),
 )
 def update_live_dashboard(n):
-    # -----------------------------
-    # Fetch latest values for cards + live graphs
-    # -----------------------------
-    for plant, feed_key in FEEDS.items():
-        try:
-            feed_data = fetch_latest_feed_value(feed_key)
-            payload_text = feed_data["value"]
-            created_at = feed_data.get("created_at")
+    with data_lock:
+        latest_copy = {plant: data.copy() for plant, data in latest_data.items()}
+        history_copy = {
+            plant: {
+                "time": list(vals["time"]),
+                "moisture_pct": list(vals["moisture_pct"]),
+                "temp_f": list(vals["temp_f"]),
+                "raw": list(vals["raw"]),
+            }
+            for plant, vals in plant_history.items()
+        }
 
-            payload = json.loads(payload_text)
-            moisture = float(payload.get("moisture_pct"))
-            temp_f = float(payload.get("temp_f"))
-            raw = int(payload.get("raw"))
-
-            timestamp = (
-                datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                if created_at
-                else datetime.now(timezone.utc)
-            )
-
-            previous_ts = latest_data[plant]["timestamp"]
-            if previous_ts != timestamp:
-                latest_data[plant] = {
-                    "moisture_pct": moisture,
-                    "temp_f": temp_f,
-                    "raw": raw,
-                    "timestamp": timestamp,
-                }
-
-                plant_history[plant]["time"].append(timestamp)
-                plant_history[plant]["moisture_pct"].append(moisture)
-                plant_history[plant]["temp_f"].append(temp_f)
-                plant_history[plant]["raw"].append(raw)
-
-                # Backup to Google Sheets once per new reading
-                if logged_timestamps[plant] != timestamp:
-                    log_to_google_sheets(timestamp, plant, moisture, temp_f, raw)
-                    logged_timestamps[plant] = timestamp
-
-        except Exception as e:
-            print(f"Failed to fetch latest value for {plant}: {e}")
-
-    # -----------------------------
-    # Build cards
-    # -----------------------------
     cards = []
     for plant in plant_names:
-        entry = latest_data.get(plant, {})
+        entry = latest_copy.get(plant, {})
         moisture = entry.get("moisture_pct")
         temp_f = entry.get("temp_f")
         raw = entry.get("raw")
@@ -293,31 +356,28 @@ def update_live_dashboard(n):
             ),
         ])
 
-    # -----------------------------
-    # Live graphs
-    # -----------------------------
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
 
     for plant in plant_names:
-        hist = plant_history.get(plant)
+        hist = history_copy.get(plant)
         if not hist or len(hist["time"]) == 0:
             continue
 
         moisture_fig.add_trace(
             go.Scatter(
-                x=list(hist["time"]),
-                y=list(hist["moisture_pct"]),
-                mode="lines+markers",
+                x=hist["time"],
+                y=hist["moisture_pct"],
+                mode="lines",
                 name=plant,
             )
         )
 
         temp_fig.add_trace(
             go.Scatter(
-                x=list(hist["time"]),
-                y=list(hist["temp_f"]),
-                mode="lines+markers",
+                x=hist["time"],
+                y=hist["temp_f"],
+                mode="lines",
                 name=plant,
             )
         )
@@ -351,62 +411,35 @@ def update_live_dashboard(n):
     Input("history-refresh", "n_intervals"),
 )
 def update_history_graphs(n):
-    # -----------------------------
-    # Refresh weekly/monthly caches
-    # -----------------------------
-    for plant, feed_key in FEEDS.items():
-        try:
-            times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=7, limit=1000)
-            weekly_cache[plant] = {
-                "time": times,
-                "moisture": moisture_vals,
-                "temp": temp_vals,
-            }
-        except Exception as e:
-            print(f"Failed weekly history for {plant}: {e}")
+    with data_lock:
+        weekly_copy = {plant: vals.copy() for plant, vals in weekly_cache.items()}
+        monthly_copy = {plant: vals.copy() for plant, vals in monthly_cache.items()}
 
-        try:
-            times, moisture_vals, temp_vals = get_history_for_days(feed_key, days=30, limit=1000)
-
-            # Downsample monthly data to speed up plotting
-            ds_times_moisture, ds_moisture_vals = downsample_data(times, moisture_vals, step=5)
-            ds_times_temp, ds_temp_vals = downsample_data(times, temp_vals, step=5)
-
-            monthly_cache[plant] = {
-                "time_moisture": ds_times_moisture,
-                "moisture": ds_moisture_vals,
-                "time_temp": ds_times_temp,
-                "temp": ds_temp_vals,
-            }
-        except Exception as e:
-            print(f"Failed monthly history for {plant}: {e}")
-
-    # -----------------------------
-    # Build weekly/monthly figures
-    # -----------------------------
     weekly_moisture_fig = go.Figure()
     weekly_temp_fig = go.Figure()
     monthly_moisture_fig = go.Figure()
     monthly_temp_fig = go.Figure()
 
     for plant in plant_names:
-        w = weekly_cache[plant]
-        m = monthly_cache[plant]
+        w = weekly_copy[plant]
+        m = monthly_copy[plant]
 
-        if w["time"]:
+        if w.get("time_moisture"):
             weekly_moisture_fig.add_trace(
                 go.Scatter(
-                    x=w["time"],
+                    x=w["time_moisture"],
                     y=w["moisture"],
-                    mode="lines+markers",
+                    mode="lines",
                     name=plant,
                 )
             )
+
+        if w.get("time_temp"):
             weekly_temp_fig.add_trace(
                 go.Scatter(
-                    x=w["time"],
+                    x=w["time_temp"],
                     y=w["temp"],
-                    mode="lines+markers",
+                    mode="lines",
                     name=plant,
                 )
             )
@@ -416,7 +449,7 @@ def update_history_graphs(n):
                 go.Scatter(
                     x=m["time_moisture"],
                     y=m["moisture"],
-                    mode="lines+markers",
+                    mode="lines",
                     name=plant,
                 )
             )
@@ -426,7 +459,7 @@ def update_history_graphs(n):
                 go.Scatter(
                     x=m["time_temp"],
                     y=m["temp"],
-                    mode="lines+markers",
+                    mode="lines",
                     name=plant,
                 )
             )
@@ -469,6 +502,11 @@ def update_history_graphs(n):
         monthly_moisture_fig,
         monthly_temp_fig,
     ]
+
+
+# Start background refresh workers once
+threading.Thread(target=refresh_latest_data, daemon=True).start()
+threading.Thread(target=refresh_history_data, daemon=True).start()
 
 
 if __name__ == "__main__":
