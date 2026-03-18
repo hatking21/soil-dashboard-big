@@ -1,8 +1,5 @@
 import os
 import json
-import time
-import threading
-from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -30,20 +27,6 @@ HEADERS = {
 }
 
 # -----------------------------
-# Google Sheets backup
-# -----------------------------
-SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
-
-if not SHEETS_WEBHOOK_URL:
-    print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
-
-SHEETS_LOG_INTERVAL = 300
-MIN_MOISTURE_CHANGE = 2.0
-
-last_logged_time = {plant: None for plant in FEEDS}
-last_logged_moisture = {plant: None for plant in FEEDS}
-
-# -----------------------------
 # Plant-specific watering rules
 # -----------------------------
 PLANT_RULES = {
@@ -54,55 +37,24 @@ PLANT_RULES = {
 }
 
 # -----------------------------
-# In-memory data stores
+# Helpers
 # -----------------------------
-MAX_POINTS = 500
-
-plant_history = defaultdict(lambda: {
-    "time": deque(maxlen=MAX_POINTS),
-    "moisture_pct": deque(maxlen=MAX_POINTS),
-    "temp_f": deque(maxlen=MAX_POINTS),
-    "raw": deque(maxlen=MAX_POINTS),
-})
-
-latest_data = {
-    plant: {"moisture_pct": None, "temp_f": None, "raw": None, "timestamp": None}
-    for plant in FEEDS
-}
-
-weekly_cache = {
-    plant: {"time_moisture": [], "moisture": [], "time_temp": [], "temp": []}
-    for plant in FEEDS
-}
-
-monthly_cache = {
-    plant: {"time_moisture": [], "moisture": [], "time_temp": [], "temp": []}
-    for plant in FEEDS
-}
-
-data_lock = threading.Lock()
-threads_started = False
-
-
 def make_session():
     s = requests.Session()
     s.headers.update(HEADERS)
     return s
 
 
-# -----------------------------
-# Adafruit IO fetch helpers
-# -----------------------------
 def fetch_latest_feed_value(feed_key, session):
     url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data/last"
-    resp = session.get(url, timeout=10)
+    resp = session.get(url, timeout=15)
     resp.raise_for_status()
     return resp.json()
 
 
 def fetch_feed_history(feed_key, session, limit=1000):
     url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data"
-    resp = session.get(url, params={"limit": limit}, timeout=20)
+    resp = session.get(url, params={"limit": limit}, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -144,25 +96,6 @@ def downsample_data(times, values, step=5):
     return times[::step], values[::step]
 
 
-def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
-    if not SHEETS_WEBHOOK_URL:
-        return
-
-    payload = {
-        "timestamp": timestamp.isoformat(),
-        "plant": plant,
-        "moisture_pct": moisture,
-        "temp_f": temp_f,
-        "raw": raw,
-    }
-
-    try:
-        resp = requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
-        print(f"Sheets log status for {plant}: {resp.status_code}", flush=True)
-    except Exception as e:
-        print(f"Failed to log to Google Sheets for {plant}: {e}", flush=True)
-
-
 def get_watering_recommendation(plant, moisture):
     if moisture is None:
         return "No data", "#666666"
@@ -179,150 +112,49 @@ def get_watering_recommendation(plant, moisture):
         return "Wet / hold off", "#5bc0de"
 
 
-# -----------------------------
-# Background refresh workers
-# -----------------------------
-def refresh_latest_data():
-    print("Starting latest-data thread", flush=True)
-    session = make_session()
-
-    while True:
-        for plant, feed_key in FEEDS.items():
-            try:
-                feed_data = fetch_latest_feed_value(feed_key, session)
-                payload_text = feed_data["value"]
-                created_at = feed_data.get("created_at")
-
-                payload = json.loads(payload_text)
-                moisture = float(payload.get("moisture_pct"))
-                temp_f = float(payload.get("temp_f"))
-                raw = int(payload.get("raw"))
-
-                timestamp = (
-                    datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    if created_at
-                    else datetime.now(timezone.utc)
-                )
-
-                should_log = False
-
-                with data_lock:
-                    previous_ts = latest_data[plant]["timestamp"]
-                    if previous_ts != timestamp:
-                        latest_data[plant] = {
-                            "moisture_pct": moisture,
-                            "temp_f": temp_f,
-                            "raw": raw,
-                            "timestamp": timestamp,
-                        }
-
-                        plant_history[plant]["time"].append(timestamp)
-                        plant_history[plant]["moisture_pct"].append(moisture)
-                        plant_history[plant]["temp_f"].append(temp_f)
-                        plant_history[plant]["raw"].append(raw)
-
-                        now = datetime.now(timezone.utc)
-                        last_time = last_logged_time[plant]
-                        last_m = last_logged_moisture[plant]
-
-                        enough_time = (
-                            last_time is None or
-                            (now - last_time).total_seconds() >= SHEETS_LOG_INTERVAL
-                        )
-                        enough_change = (
-                            last_m is None or
-                            abs(moisture - last_m) >= MIN_MOISTURE_CHANGE
-                        )
-
-                        if enough_time and enough_change:
-                            last_logged_time[plant] = now
-                            last_logged_moisture[plant] = moisture
-                            should_log = True
-
-                if should_log:
-                    print(f"New live reading for {plant}: {moisture:.1f}% {temp_f:.2f}F", flush=True)
-                    log_to_google_sheets(timestamp, plant, moisture, temp_f, raw)
-
-            except Exception as e:
-                print(f"Failed latest refresh for {plant}: {e}", flush=True)
-
-        time.sleep(10)
+def make_card(plant):
+    return html.Div(
+        id=f"card-{plant}",
+        style={
+            "border": "1px solid #ddd",
+            "borderRadius": "12px",
+            "padding": "16px",
+            "margin": "8px",
+            "width": "260px",
+            "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
+            "backgroundColor": "white",
+        },
+    )
 
 
-def refresh_history_data():
-    print("Starting history-data thread", flush=True)
-    session = make_session()
-
-    while True:
-        for plant, feed_key in FEEDS.items():
-            try:
-                times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=7, limit=1000)
-                ds_tw_m, ds_mw = downsample_data(times, moisture_vals, step=2)
-                ds_tw_t, ds_tw_temp = downsample_data(times, temp_vals, step=2)
-
-                with data_lock:
-                    weekly_cache[plant] = {
-                        "time_moisture": ds_tw_m,
-                        "moisture": ds_mw,
-                        "time_temp": ds_tw_t,
-                        "temp": ds_tw_temp,
-                    }
-            except Exception as e:
-                print(f"Failed weekly refresh for {plant}: {e}", flush=True)
-
-            try:
-                times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=30, limit=1000)
-                ds_tm_m, ds_mm = downsample_data(times, moisture_vals, step=10)
-                ds_tm_t, ds_tm_temp = downsample_data(times, temp_vals, step=10)
-
-                with data_lock:
-                    monthly_cache[plant] = {
-                        "time_moisture": ds_tm_m,
-                        "moisture": ds_mm,
-                        "time_temp": ds_tm_t,
-                        "temp": ds_tm_temp,
-                    }
-            except Exception as e:
-                print(f"Failed monthly refresh for {plant}: {e}", flush=True)
-
-        print("History cache refreshed", flush=True)
-        time.sleep(600)
-
-
-def start_background_threads():
-    global threads_started
-    if threads_started:
-        return
-    threads_started = True
-    threading.Thread(target=refresh_latest_data, daemon=True).start()
-    threading.Thread(target=refresh_history_data, daemon=True).start()
-
-
-# -----------------------------
-# Figure builders
-# -----------------------------
-def build_live_figures(history_copy):
+def build_live_figures(session):
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
 
-    for plant in FEEDS:
-        hist = history_copy.get(plant)
-        if not hist or len(hist["time"]) == 0:
-            continue
+    for plant, feed_key in FEEDS.items():
+        try:
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=1, limit=300)
 
-        moisture_fig.add_trace(go.Scatter(
-            x=hist["time"],
-            y=hist["moisture_pct"],
-            mode="lines",
-            name=plant,
-        ))
+            if times:
+                moisture_fig.add_trace(
+                    go.Scatter(
+                        x=times,
+                        y=moisture_vals,
+                        mode="lines",
+                        name=plant,
+                    )
+                )
 
-        temp_fig.add_trace(go.Scatter(
-            x=hist["time"],
-            y=hist["temp_f"],
-            mode="lines",
-            name=plant,
-        ))
+                temp_fig.add_trace(
+                    go.Scatter(
+                        x=times,
+                        y=temp_vals,
+                        mode="lines",
+                        name=plant,
+                    )
+                )
+        except Exception as e:
+            print(f"Failed live history for {plant}: {e}", flush=True)
 
     moisture_fig.update_layout(
         title="Live Moisture (%)",
@@ -343,28 +175,39 @@ def build_live_figures(history_copy):
     return moisture_fig, temp_fig
 
 
-def build_weekly_figures(weekly_copy):
+def build_weekly_figures(session):
     weekly_moisture_fig = go.Figure()
     weekly_temp_fig = go.Figure()
 
-    for plant in FEEDS:
-        w = weekly_copy[plant]
+    for plant, feed_key in FEEDS.items():
+        try:
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=7, limit=1000)
 
-        if w.get("time_moisture"):
-            weekly_moisture_fig.add_trace(go.Scatter(
-                x=w["time_moisture"],
-                y=w["moisture"],
-                mode="lines",
-                name=plant,
-            ))
+            times_m, moisture_vals = downsample_data(times, moisture_vals, step=2)
+            times_t, temp_vals = downsample_data(times, temp_vals, step=2)
 
-        if w.get("time_temp"):
-            weekly_temp_fig.add_trace(go.Scatter(
-                x=w["time_temp"],
-                y=w["temp"],
-                mode="lines",
-                name=plant,
-            ))
+            if times_m:
+                weekly_moisture_fig.add_trace(
+                    go.Scatter(
+                        x=times_m,
+                        y=moisture_vals,
+                        mode="lines",
+                        name=plant,
+                    )
+                )
+
+            if times_t:
+                weekly_temp_fig.add_trace(
+                    go.Scatter(
+                        x=times_t,
+                        y=temp_vals,
+                        mode="lines",
+                        name=plant,
+                    )
+                )
+
+        except Exception as e:
+            print(f"Failed weekly history for {plant}: {e}", flush=True)
 
     weekly_moisture_fig.update_layout(
         title="Weekly Moisture Trend (Last 7 Days)",
@@ -385,28 +228,39 @@ def build_weekly_figures(weekly_copy):
     return weekly_moisture_fig, weekly_temp_fig
 
 
-def build_monthly_figures(monthly_copy):
+def build_monthly_figures(session):
     monthly_moisture_fig = go.Figure()
     monthly_temp_fig = go.Figure()
 
-    for plant in FEEDS:
-        m = monthly_copy[plant]
+    for plant, feed_key in FEEDS.items():
+        try:
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=30, limit=1000)
 
-        if m.get("time_moisture"):
-            monthly_moisture_fig.add_trace(go.Scatter(
-                x=m["time_moisture"],
-                y=m["moisture"],
-                mode="lines",
-                name=plant,
-            ))
+            times_m, moisture_vals = downsample_data(times, moisture_vals, step=10)
+            times_t, temp_vals = downsample_data(times, temp_vals, step=10)
 
-        if m.get("time_temp"):
-            monthly_temp_fig.add_trace(go.Scatter(
-                x=m["time_temp"],
-                y=m["temp"],
-                mode="lines",
-                name=plant,
-            ))
+            if times_m:
+                monthly_moisture_fig.add_trace(
+                    go.Scatter(
+                        x=times_m,
+                        y=moisture_vals,
+                        mode="lines",
+                        name=plant,
+                    )
+                )
+
+            if times_t:
+                monthly_temp_fig.add_trace(
+                    go.Scatter(
+                        x=times_t,
+                        y=temp_vals,
+                        mode="lines",
+                        name=plant,
+                    )
+                )
+
+        except Exception as e:
+            print(f"Failed monthly history for {plant}: {e}", flush=True)
 
     monthly_moisture_fig.update_layout(
         title="Monthly Moisture Trend (Last 30 Days)",
@@ -436,30 +290,13 @@ app.title = "Soil Monitor Dashboard"
 
 plant_names = list(FEEDS.keys())
 
-
-def make_card(plant):
-    return html.Div(
-        id=f"card-{plant}",
-        style={
-            "border": "1px solid #ddd",
-            "borderRadius": "12px",
-            "padding": "16px",
-            "margin": "8px",
-            "width": "260px",
-            "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
-            "backgroundColor": "white",
-        },
-    )
-
-
 app.layout = html.Div(
     style={"fontFamily": "Arial, sans-serif", "padding": "20px", "backgroundColor": "#f7f7f7"},
     children=[
         html.H1("Plant Soil Monitor"),
         html.P("Live readings from Adafruit IO"),
 
-        dcc.Interval(id="live-refresh", interval=10000, n_intervals=0),
-        dcc.Interval(id="history-refresh", interval=300000, n_intervals=0),
+        dcc.Interval(id="refresh", interval=30000, n_intervals=0),
 
         html.Div(
             [make_card(plant) for plant in plant_names],
@@ -483,36 +320,62 @@ app.layout = html.Div(
 
 @app.callback(
     [Output(f"card-{plant}", "children") for plant in plant_names],
-    Input("live-refresh", "n_intervals"),
+    Input("refresh", "n_intervals"),
 )
 def update_cards(n):
-    with data_lock:
-        latest_copy = {plant: data.copy() for plant, data in latest_data.items()}
-
+    session = make_session()
     cards = []
-    for plant in plant_names:
-        entry = latest_copy.get(plant, {})
-        moisture = entry.get("moisture_pct")
-        temp_f = entry.get("temp_f")
-        raw = entry.get("raw")
-        ts = entry.get("timestamp")
 
-        recommendation, rec_color = get_watering_recommendation(plant, moisture)
+    for plant, feed_key in FEEDS.items():
+        try:
+            feed_data = fetch_latest_feed_value(feed_key, session)
+            payload_text = feed_data["value"]
+            created_at = feed_data.get("created_at")
 
-        cards.append([
-            html.H3(plant, style={"marginTop": "0"}),
-            html.P(f"Moisture: {moisture:.1f} %" if moisture is not None else "Moisture: --"),
-            html.P(f"Temperature: {temp_f:.2f} °F" if temp_f is not None else "Temperature: --"),
-            html.P(f"Raw: {raw}" if raw is not None else "Raw: --"),
-            html.P(
-                f"Recommendation: {recommendation}",
-                style={"fontWeight": "bold", "color": rec_color}
-            ),
-            html.P(
-                f"Last update: {ts.astimezone().strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
-                style={"color": "#666", "fontSize": "0.9rem"},
-            ),
-        ])
+            payload = json.loads(payload_text)
+            moisture = float(payload.get("moisture_pct"))
+            temp_f = float(payload.get("temp_f"))
+            raw = int(payload.get("raw"))
+
+            ts = (
+                datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                if created_at
+                else None
+            )
+
+            recommendation, rec_color = get_watering_recommendation(plant, moisture)
+
+            cards.append([
+                html.H3(plant, style={"marginTop": "0"}),
+                html.P(f"Moisture: {moisture:.1f} %"),
+                html.P(f"Temperature: {temp_f:.2f} °F"),
+                html.P(f"Raw: {raw}"),
+                html.P(
+                    f"Recommendation: {recommendation}",
+                    style={"fontWeight": "bold", "color": rec_color}
+                ),
+                html.P(
+                    f"Last update: {ts.astimezone().strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
+                    style={"color": "#666", "fontSize": "0.9rem"},
+                ),
+            ])
+
+        except Exception as e:
+            print(f"Failed latest card fetch for {plant}: {e}", flush=True)
+            cards.append([
+                html.H3(plant, style={"marginTop": "0"}),
+                html.P("Moisture: --"),
+                html.P("Temperature: --"),
+                html.P("Raw: --"),
+                html.P(
+                    "Recommendation: No data",
+                    style={"fontWeight": "bold", "color": "#666666"}
+                ),
+                html.P(
+                    "Last update: --",
+                    style={"color": "#666", "fontSize": "0.9rem"},
+                ),
+            ])
 
     return cards
 
@@ -521,46 +384,32 @@ def update_cards(n):
     Output("tab-content", "children"),
     [
         Input("view-tabs", "value"),
-        Input("live-refresh", "n_intervals"),
-        Input("history-refresh", "n_intervals"),
+        Input("refresh", "n_intervals"),
     ],
 )
-def render_tab(tab, n_live, n_hist):
-    with data_lock:
-        history_copy = {
-            plant: {
-                "time": list(vals["time"]),
-                "moisture_pct": list(vals["moisture_pct"]),
-                "temp_f": list(vals["temp_f"]),
-                "raw": list(vals["raw"]),
-            }
-            for plant, vals in plant_history.items()
-        }
-        weekly_copy = {plant: vals.copy() for plant, vals in weekly_cache.items()}
-        monthly_copy = {plant: vals.copy() for plant, vals in monthly_cache.items()}
+def render_tab(tab, n):
+    session = make_session()
 
     if tab == "live":
-        moisture_fig, temp_fig = build_live_figures(history_copy)
+        moisture_fig, temp_fig = build_live_figures(session)
         return html.Div([
             dcc.Graph(figure=moisture_fig),
             dcc.Graph(figure=temp_fig),
         ])
 
     if tab == "weekly":
-        weekly_moisture_fig, weekly_temp_fig = build_weekly_figures(weekly_copy)
+        weekly_moisture_fig, weekly_temp_fig = build_weekly_figures(session)
         return html.Div([
             dcc.Graph(figure=weekly_moisture_fig),
             dcc.Graph(figure=weekly_temp_fig),
         ])
 
-    monthly_moisture_fig, monthly_temp_fig = build_monthly_figures(monthly_copy)
+    monthly_moisture_fig, monthly_temp_fig = build_monthly_figures(session)
     return html.Div([
         dcc.Graph(figure=monthly_moisture_fig),
         dcc.Graph(figure=monthly_temp_fig),
     ])
 
-
-start_background_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
