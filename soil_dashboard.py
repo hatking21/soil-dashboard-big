@@ -180,7 +180,7 @@ def should_log_to_sheets(plant, moisture):
 def send_discord_message(content):
     if not DISCORD_WEBHOOK_URL:
         print("Discord webhook URL missing", flush=True)
-        return
+        return False
 
     try:
         resp = requests.post(
@@ -193,8 +193,12 @@ def send_discord_message(content):
 
         if resp.status_code >= 400:
             print(f"Discord webhook failed: {resp.status_code} {resp.text}", flush=True)
+            return False
+
+        return True
     except Exception as e:
         print(f"Failed to send Discord message: {e}", flush=True)
+        return False
 
 
 def maybe_send_urgent_alert(plant, moisture, recommendation):
@@ -367,19 +371,38 @@ def build_settings_panel(rules_dict):
         )
 
     children.append(
-        html.Button(
-            "Save Rules",
-            id="save-rules-button",
-            n_clicks=0,
-            style={
-                "padding": "10px 16px",
-                "borderRadius": "8px",
-                "border": "1px solid #888",
-                "cursor": "pointer",
-            },
+        html.Div(
+            [
+                html.Button(
+                    "Save Rules",
+                    id="save-rules-button",
+                    n_clicks=0,
+                    style={
+                        "padding": "10px 16px",
+                        "borderRadius": "8px",
+                        "border": "1px solid #888",
+                        "cursor": "pointer",
+                        "marginRight": "12px",
+                    },
+                ),
+                html.Button(
+                    "Send Discord Test Message",
+                    id="discord-test-button",
+                    n_clicks=0,
+                    style={
+                        "padding": "10px 16px",
+                        "borderRadius": "8px",
+                        "border": "1px solid #888",
+                        "cursor": "pointer",
+                    },
+                ),
+            ],
+            style={"marginBottom": "12px"},
         )
     )
+
     children.append(html.Div(id="save-rules-status", style={"marginTop": "10px"}))
+    children.append(html.Div(id="discord-test-status", style={"marginTop": "10px"}))
 
     return html.Div(children)
 
@@ -575,10 +598,11 @@ app.layout = html.Div(
     State({"type": "dry-input", "plant": ALL}, "value"),
     State({"type": "ideal-low-input", "plant": ALL}, "value"),
     State({"type": "ideal-high-input", "plant": ALL}, "value"),
-    State("plant-rules-store", "data"),
     prevent_initial_call=True,
 )
-def save_rules(n_clicks, dry_values, low_values, high_values, current_rules):
+def save_rules(n_clicks, dry_values, low_values, high_values):
+    global alert_state
+
     plants = list(FEEDS.keys())
     new_rules = {}
 
@@ -599,14 +623,33 @@ def save_rules(n_clicks, dry_values, low_values, high_values, current_rules):
             "ideal_high": high,
         }
 
-    return new_rules, "Rules saved in this browser."
+    # Reset alert state so new rules can trigger fresh urgent alerts
+    alert_state = {plant: False for plant in FEEDS}
+
+    return new_rules, "Rules saved in this browser. Alert state reset."
+
+
+@app.callback(
+    Output("discord-test-status", "children"),
+    Input("discord-test-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def send_test_discord_message(n_clicks):
+    now_local = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
+    ok = send_discord_message(
+        f"🧪 **Soil Monitor Discord Test**\n"
+        f"Time: {now_local}\n"
+        f"If you see this, the webhook is working."
+    )
+    if ok:
+        return "Discord test message sent."
+    return "Discord test failed. Check Render logs."
 
 
 @app.callback(
     [Output(f"card-{plant}", "children") for plant in plant_names]
     + [Output("system-status", "children"), Output("alert-banner", "children")],
-    Input("refresh", "n_intervals"),
-    State("plant-rules-store", "data"),
+    [Input("refresh", "n_intervals"), Input("plant-rules-store", "data")],
 )
 def update_cards(n, rules_dict):
     if not rules_dict:
@@ -764,8 +807,7 @@ def update_cards(n, rules_dict):
 
 @app.callback(
     Output("tab-content", "children"),
-    [Input("view-tabs", "value"), Input("refresh", "n_intervals")],
-    State("plant-rules-store", "data"),
+    [Input("view-tabs", "value"), Input("refresh", "n_intervals"), Input("plant-rules-store", "data")],
 )
 def render_tab(tab, n, rules_dict):
     if not rules_dict:
