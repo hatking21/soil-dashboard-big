@@ -32,20 +32,17 @@ FEEDS = {
     "Rex Begonia": "rex-begonia",
 }
 
-HEADERS = {
-    "X-AIO-Key": AIO_KEY,
-}
-
+HEADERS = {"X-AIO-Key": AIO_KEY}
 LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 
 # -----------------------------
 # Logging / notification settings
 # -----------------------------
-CSV_LOG_INTERVAL = 300      # 5 min
-MIN_MOISTURE_CHANGE = 2.0   # percent
+CSV_LOG_INTERVAL = 300
+MIN_MOISTURE_CHANGE = 2.0
 CSV_RETENTION_DAYS = 35
 
-NTFY_MIN_INTERVAL = 60      # seconds between notifications
+NTFY_MIN_INTERVAL = 60
 SENSOR_OFFLINE_MINUTES = 60
 
 last_logged_time = {plant: None for plant in FEEDS}
@@ -66,6 +63,70 @@ if not NTFY_TOPIC:
 # -----------------------------
 DEFAULT_RULE = {"dry": 20, "ideal_low": 35, "ideal_high": 80}
 DEFAULT_PLANT_RULES = {plant: DEFAULT_RULE.copy() for plant in FEEDS}
+
+# -----------------------------
+# Reusable styles
+# -----------------------------
+PAGE_STYLE = {
+    "fontFamily": "Arial, sans-serif",
+    "background": "linear-gradient(180deg, #f5fbf7 0%, #eef4f8 100%)",
+    "minHeight": "100vh",
+    "padding": "24px",
+}
+
+CONTAINER_STYLE = {
+    "maxWidth": "1280px",
+    "margin": "0 auto",
+}
+
+CARD_SHELL_STYLE = {
+    "borderRadius": "18px",
+    "padding": "16px",
+    "backgroundColor": "white",
+    "boxShadow": "0 8px 24px rgba(25, 40, 35, 0.08)",
+    "border": "1px solid rgba(0,0,0,0.06)",
+}
+
+HEADER_PANEL_STYLE = {
+    "background": "linear-gradient(135deg, #2e7d5a 0%, #4e9c78 100%)",
+    "color": "white",
+    "borderRadius": "20px",
+    "padding": "24px 26px",
+    "boxShadow": "0 10px 28px rgba(46,125,90,0.18)",
+    "marginBottom": "18px",
+}
+
+SECTION_STYLE = {
+    "backgroundColor": "rgba(255,255,255,0.75)",
+    "backdropFilter": "blur(4px)",
+    "border": "1px solid rgba(0,0,0,0.06)",
+    "borderRadius": "18px",
+    "padding": "16px",
+    "boxShadow": "0 6px 20px rgba(0,0,0,0.05)",
+}
+
+BUTTON_STYLE = {
+    "padding": "10px 16px",
+    "borderRadius": "10px",
+    "border": "1px solid #b8c6bf",
+    "cursor": "pointer",
+    "backgroundColor": "#ffffff",
+    "color": "#1f2b24",
+    "fontWeight": "600",
+    "boxShadow": "0 2px 8px rgba(0,0,0,0.04)",
+}
+
+CHIP_STYLE = {
+    "display": "inline-block",
+    "padding": "10px 14px",
+    "borderRadius": "999px",
+    "backgroundColor": "white",
+    "border": "1px solid rgba(0,0,0,0.08)",
+    "boxShadow": "0 2px 8px rgba(0,0,0,0.04)",
+    "fontSize": "0.95rem",
+    "marginRight": "10px",
+    "marginBottom": "10px",
+}
 
 # -----------------------------
 # Helpers
@@ -129,18 +190,18 @@ def downsample_data(times, values, step=5):
 
 def get_watering_recommendation(plant, moisture, rules_dict):
     if moisture is None:
-        return "No data", "#666666", "#f4f4f4"
+        return "No data", "#6b7280", "#f3f4f6"
 
     rules = rules_dict[plant]
 
     if moisture < rules["dry"]:
-        return "Water now", "#d9534f", "#fff1f0"
+        return "Water now", "#c0392b", "#fff1ef"
     elif moisture < rules["ideal_low"]:
-        return "Check soon", "#f0ad4e", "#fff8e8"
+        return "Check soon", "#d9822b", "#fff7eb"
     elif moisture <= rules["ideal_high"]:
-        return "Moisture looks good", "#5cb85c", "#f1fff1"
+        return "Moisture looks good", "#2e8b57", "#f2fff7"
     else:
-        return "Wet / hold off", "#5bc0de", "#eefbff"
+        return "Wet / hold off", "#2f7ea1", "#eef9ff"
 
 
 def ensure_csv_directory_exists():
@@ -151,7 +212,6 @@ def ensure_csv_directory_exists():
 
 def ensure_csv_exists():
     ensure_csv_directory_exists()
-
     if not os.path.exists(CSV_LOG_PATH):
         with open(CSV_LOG_PATH, mode="w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -177,7 +237,6 @@ def prune_csv_file():
         with open(CSV_LOG_PATH, mode="r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames
-
             if not fieldnames:
                 return
 
@@ -185,12 +244,10 @@ def prune_csv_file():
                 ts_text = row.get("timestamp_utc")
                 if not ts_text:
                     continue
-
                 try:
                     ts = datetime.fromisoformat(ts_text)
                 except ValueError:
                     continue
-
                 if ts >= cutoff:
                     kept_rows.append(row)
 
@@ -205,18 +262,15 @@ def prune_csv_file():
 
 def maybe_prune_csv_file():
     global last_csv_prune_date
-
     today = datetime.now(timezone.utc).date()
     if last_csv_prune_date == today:
         return
-
     prune_csv_file()
     last_csv_prune_date = today
 
 
 def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_offline):
     global last_csv_status
-
     ensure_csv_exists()
 
     try:
@@ -231,13 +285,11 @@ def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_o
                 recommendation,
                 sensor_offline,
             ])
-
         maybe_prune_csv_file()
         last_csv_status = (
             f"Last write OK: {plant} at "
             f"{datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
         )
-
     except Exception as e:
         last_csv_status = f"Last write failed: {e}"
         print(f"Failed to log to CSV for {plant}: {e}", flush=True)
@@ -246,7 +298,6 @@ def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_o
 def get_csv_row_count():
     if not os.path.exists(CSV_LOG_PATH):
         return 0
-
     try:
         with open(CSV_LOG_PATH, mode="r", newline="", encoding="utf-8") as f:
             reader = csv.reader(f)
@@ -260,7 +311,6 @@ def get_csv_row_count():
 def get_csv_last_write_time():
     if not os.path.exists(CSV_LOG_PATH):
         return "Not created yet"
-
     try:
         ts = os.path.getmtime(CSV_LOG_PATH)
         dt_local = datetime.fromtimestamp(ts, tz=LOCAL_TZ)
@@ -275,21 +325,13 @@ def should_log_reading(plant, moisture):
     last_time = last_logged_time[plant]
     last_m = last_logged_moisture[plant]
 
-    enough_time = (
-        last_time is None or
-        (now - last_time).total_seconds() >= CSV_LOG_INTERVAL
-    )
-
-    enough_change = (
-        last_m is None or
-        abs(moisture - last_m) >= MIN_MOISTURE_CHANGE
-    )
+    enough_time = last_time is None or (now - last_time).total_seconds() >= CSV_LOG_INTERVAL
+    enough_change = last_m is None or abs(moisture - last_m) >= MIN_MOISTURE_CHANGE
 
     if enough_time and enough_change:
         last_logged_time[plant] = now
         last_logged_moisture[plant] = moisture
         return True
-
     return False
 
 
@@ -304,30 +346,16 @@ def send_ntfy_alert(title, message, priority="default", tags=None):
     if last_ntfy_sent_at is not None:
         seconds_since_last = (now - last_ntfy_sent_at).total_seconds()
         if seconds_since_last < NTFY_MIN_INTERVAL:
-            print(
-                f"ntfy send skipped due to cooldown ({seconds_since_last:.1f}s since last send)",
-                flush=True
-            )
+            print(f"ntfy send skipped due to cooldown ({seconds_since_last:.1f}s since last send)", flush=True)
             return False
 
     url = f"{NTFY_BASE_URL.rstrip('/')}/{NTFY_TOPIC}"
-
-    headers = {
-        "Title": title,
-        "Priority": priority,
-    }
-
+    headers = {"Title": title, "Priority": priority}
     if tags:
         headers["Tags"] = ",".join(tags)
 
     try:
-        resp = requests.post(
-            url,
-            data=message.encode("utf-8"),
-            headers=headers,
-            timeout=20,
-        )
-
+        resp = requests.post(url, data=message.encode("utf-8"), headers=headers, timeout=20)
         print(f"ntfy status: {resp.status_code}", flush=True)
         print(f"ntfy response: {resp.text}", flush=True)
 
@@ -337,7 +365,6 @@ def send_ntfy_alert(title, message, priority="default", tags=None):
 
         last_ntfy_sent_at = now
         return True
-
     except Exception as e:
         print(f"Failed to send ntfy notification: {e}", flush=True)
         return False
@@ -346,7 +373,6 @@ def send_ntfy_alert(title, message, priority="default", tags=None):
 def is_sensor_offline(timestamp, offline_minutes=SENSOR_OFFLINE_MINUTES):
     if timestamp is None:
         return True
-
     now_utc = datetime.now(timezone.utc)
     age_seconds = (now_utc - timestamp).total_seconds()
     return age_seconds > offline_minutes * 60
@@ -417,10 +443,7 @@ def maybe_send_daily_summary(latest_snapshot):
     now_local = datetime.now(LOCAL_TZ)
     today = now_local.date()
 
-    if now_local.hour < 18:
-        return
-
-    if last_daily_summary_date == today:
+    if now_local.hour < 18 or last_daily_summary_date == today:
         return
 
     lines = []
@@ -446,14 +469,12 @@ def maybe_send_daily_summary(latest_snapshot):
             offline_plants.append(plant)
 
     body = f"Daily Plant Summary ({now_local.strftime('%Y-%m-%d %I:%M %p')})\n\n"
-
     if urgent:
         body += f"Water alerts: {', '.join(urgent)}\n"
     if offline_plants:
         body += f"Offline sensors: {', '.join(offline_plants)}\n"
     if urgent or offline_plants:
         body += "\n"
-
     body += "\n".join(lines)
 
     sent = send_ntfy_alert(
@@ -472,36 +493,62 @@ def add_ideal_band(fig, plant, rules_dict):
     fig.add_hrect(
         y0=rules["ideal_low"],
         y1=rules["ideal_high"],
-        fillcolor="rgba(92,184,92,0.10)",
+        fillcolor="rgba(46,139,87,0.10)",
         line_width=0,
     )
+
+
+def style_figure(fig, title, yaxis_title):
+    fig.update_layout(
+        title={"text": title, "x": 0.02, "xanchor": "left"},
+        xaxis_title="Time",
+        yaxis_title=yaxis_title,
+        template="plotly_white",
+        height=460,
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        margin=dict(l=40, r=20, t=60, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor="rgba(0,0,0,0.08)")
+    return fig
 
 
 def make_card(plant):
     return html.Div(
         id=f"card-{plant}",
         style={
-            "border": "1px solid #ddd",
-            "borderRadius": "12px",
-            "padding": "16px",
-            "margin": "8px",
-            "width": "260px",
-            "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
+            "width": "270px",
+            "borderRadius": "18px",
             "backgroundColor": "white",
+            "boxShadow": "0 10px 24px rgba(0,0,0,0.06)",
+            "border": "1px solid rgba(0,0,0,0.06)",
+            "overflow": "hidden",
         },
     )
 
 
 def build_settings_panel(rules_dict):
     children = [
-        html.H3("Plant Threshold Settings"),
-        html.P("These settings are stored in this browser."),
-        html.P(f"Sensor offline threshold: {SENSOR_OFFLINE_MINUTES} minutes"),
-        html.P(f"CSV retention: {CSV_RETENTION_DAYS} days"),
-        html.P(f"CSV file: {CSV_LOG_PATH}"),
-        html.P(f"CSV row count: {get_csv_row_count()}"),
-        html.P(f"CSV last write: {get_csv_last_write_time()}"),
-        html.P(f"CSV status: {last_csv_status}"),
+        html.H3("Plant Threshold Settings", style={"marginTop": "0"}),
+        html.P("These settings are stored in this browser.", style={"color": "#5b6b63"}),
+        html.Div(
+            [
+                html.Span(f"Sensor offline threshold: {SENSOR_OFFLINE_MINUTES} min", style=CHIP_STYLE),
+                html.Span(f"CSV retention: {CSV_RETENTION_DAYS} days", style=CHIP_STYLE),
+                html.Span(f"CSV rows: {get_csv_row_count()}", style=CHIP_STYLE),
+            ]
+        ),
+        html.P(f"CSV file: {CSV_LOG_PATH}", style={"color": "#5b6b63"}),
+        html.P(f"CSV last write: {get_csv_last_write_time()}", style={"color": "#5b6b63"}),
+        html.P(f"CSV status: {last_csv_status}", style={"color": "#2d3c35", "fontWeight": "600"}),
     ]
 
     for plant in FEEDS:
@@ -510,12 +557,12 @@ def build_settings_panel(rules_dict):
         children.append(
             html.Div(
                 [
-                    html.H4(plant),
+                    html.H4(plant, style={"marginTop": "0", "marginBottom": "12px"}),
                     html.Div(
                         [
                             html.Div(
                                 [
-                                    html.Label("Dry threshold"),
+                                    html.Label("Dry threshold", style={"fontWeight": "600"}),
                                     dcc.Input(
                                         id={"type": "dry-input", "plant": plant},
                                         type="number",
@@ -523,14 +570,14 @@ def build_settings_panel(rules_dict):
                                         min=0,
                                         max=100,
                                         step=1,
-                                        style={"width": "100%"},
+                                        style={"width": "100%", "padding": "10px", "borderRadius": "10px", "border": "1px solid #ccd7d0"},
                                     ),
                                 ],
                                 style={"flex": "1"},
                             ),
                             html.Div(
                                 [
-                                    html.Label("Ideal low"),
+                                    html.Label("Ideal low", style={"fontWeight": "600"}),
                                     dcc.Input(
                                         id={"type": "ideal-low-input", "plant": plant},
                                         type="number",
@@ -538,14 +585,14 @@ def build_settings_panel(rules_dict):
                                         min=0,
                                         max=100,
                                         step=1,
-                                        style={"width": "100%"},
+                                        style={"width": "100%", "padding": "10px", "borderRadius": "10px", "border": "1px solid #ccd7d0"},
                                     ),
                                 ],
                                 style={"flex": "1"},
                             ),
                             html.Div(
                                 [
-                                    html.Label("Ideal high"),
+                                    html.Label("Ideal high", style={"fontWeight": "600"}),
                                     dcc.Input(
                                         id={"type": "ideal-high-input", "plant": plant},
                                         type="number",
@@ -553,66 +600,33 @@ def build_settings_panel(rules_dict):
                                         min=0,
                                         max=100,
                                         step=1,
-                                        style={"width": "100%"},
+                                        style={"width": "100%", "padding": "10px", "borderRadius": "10px", "border": "1px solid #ccd7d0"},
                                     ),
                                 ],
                                 style={"flex": "1"},
                             ),
                         ],
-                        style={"display": "flex", "gap": "12px", "marginBottom": "10px"},
+                        style={"display": "flex", "gap": "12px", "marginBottom": "8px"},
                     ),
-                    html.Hr(),
                 ],
-                style={
-                    "backgroundColor": "#ffffff",
-                    "padding": "14px",
-                    "borderRadius": "10px",
-                    "marginBottom": "12px",
-                    "border": "1px solid #ddd",
-                },
+                style={**SECTION_STYLE, "marginBottom": "14px"},
             )
         )
 
     children.append(
         html.Div(
             [
-                html.Button(
-                    "Save Rules",
-                    id="save-rules-button",
-                    n_clicks=0,
-                    style={
-                        "padding": "10px 16px",
-                        "borderRadius": "8px",
-                        "border": "1px solid #888",
-                        "cursor": "pointer",
-                        "marginRight": "12px",
-                    },
-                ),
-                html.Button(
-                    "Send ntfy Test Message",
-                    id="ntfy-test-button",
-                    n_clicks=0,
-                    style={
-                        "padding": "10px 16px",
-                        "borderRadius": "8px",
-                        "border": "1px solid #888",
-                        "cursor": "pointer",
-                        "marginRight": "12px",
-                    },
-                ),
+                html.Button("Save Rules", id="save-rules-button", n_clicks=0, style={**BUTTON_STYLE, "marginRight": "12px"}),
+                html.Button("Send ntfy Test Message", id="ntfy-test-button", n_clicks=0, style={**BUTTON_STYLE, "marginRight": "12px"}),
                 html.A(
                     "Download CSV",
                     href="/download-csv",
                     target="_blank",
                     style={
+                        **BUTTON_STYLE,
                         "display": "inline-block",
-                        "padding": "10px 16px",
-                        "borderRadius": "8px",
-                        "border": "1px solid #888",
-                        "cursor": "pointer",
                         "textDecoration": "none",
-                        "color": "black",
-                        "backgroundColor": "#f7f7f7",
+                        "color": "#1f2b24",
                     },
                 ),
             ],
@@ -620,165 +634,85 @@ def build_settings_panel(rules_dict):
         )
     )
 
-    children.append(html.Div(id="save-rules-status", style={"marginTop": "10px"}))
-    children.append(html.Div(id="ntfy-test-status", style={"marginTop": "10px"}))
+    children.append(html.Div(id="save-rules-status", style={"marginTop": "10px", "fontWeight": "600"}))
+    children.append(html.Div(id="ntfy-test-status", style={"marginTop": "10px", "fontWeight": "600"}))
 
-    return html.Div(children)
+    return html.Div(children, style=SECTION_STYLE)
 
 
-# -----------------------------
-# Figure builders
-# -----------------------------
 def build_live_figures(session, rules_dict):
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
-
     added_band = False
 
     for plant, feed_key in FEEDS.items():
         try:
-            times, moisture_vals, temp_vals = get_history_for_days(
-                feed_key, session, days=1, limit=300
-            )
-
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=1, limit=300)
             if times:
-                moisture_fig.add_trace(
-                    go.Scatter(x=times, y=moisture_vals, mode="lines", name=plant)
-                )
-                temp_fig.add_trace(
-                    go.Scatter(x=times, y=temp_vals, mode="lines", name=plant)
-                )
-
+                moisture_fig.add_trace(go.Scatter(x=times, y=moisture_vals, mode="lines", name=plant))
+                temp_fig.add_trace(go.Scatter(x=times, y=temp_vals, mode="lines", name=plant))
                 if not added_band:
                     add_ideal_band(moisture_fig, plant, rules_dict)
                     added_band = True
-
         except Exception as e:
             print(f"Failed live history for {plant}: {e}", flush=True)
 
-    moisture_fig.update_layout(
-        title="Live Moisture (%)",
-        xaxis_title="Time",
-        yaxis_title="Moisture (%)",
-        template="plotly_white",
-        height=450,
-    )
-
-    temp_fig.update_layout(
-        title="Live Temperature (°F)",
-        xaxis_title="Time",
-        yaxis_title="Temperature (°F)",
-        template="plotly_white",
-        height=450,
-    )
-
-    return moisture_fig, temp_fig
+    return style_figure(moisture_fig, "Live Moisture", "Moisture (%)"), style_figure(temp_fig, "Live Temperature", "Temperature (°F)")
 
 
 def build_weekly_figures(session, rules_dict):
     weekly_moisture_fig = go.Figure()
     weekly_temp_fig = go.Figure()
-
     added_band = False
 
     for plant, feed_key in FEEDS.items():
         try:
-            times, moisture_vals, temp_vals = get_history_for_days(
-                feed_key, session, days=7, limit=1000
-            )
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=7, limit=1000)
             times_m, moisture_vals_ds = downsample_data(times, moisture_vals, step=2)
             times_t, temp_vals_ds = downsample_data(times, temp_vals, step=2)
 
             if times_m:
-                weekly_moisture_fig.add_trace(
-                    go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant)
-                )
+                weekly_moisture_fig.add_trace(go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant))
                 if not added_band:
                     add_ideal_band(weekly_moisture_fig, plant, rules_dict)
                     added_band = True
 
             if times_t:
-                weekly_temp_fig.add_trace(
-                    go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant)
-                )
-
+                weekly_temp_fig.add_trace(go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant))
         except Exception as e:
             print(f"Failed weekly history for {plant}: {e}", flush=True)
 
-    weekly_moisture_fig.update_layout(
-        title="Weekly Moisture Trend (Last 7 Days)",
-        xaxis_title="Time",
-        yaxis_title="Moisture (%)",
-        template="plotly_white",
-        height=450,
-    )
-
-    weekly_temp_fig.update_layout(
-        title="Weekly Temperature Trend (Last 7 Days)",
-        xaxis_title="Time",
-        yaxis_title="Temperature (°F)",
-        template="plotly_white",
-        height=450,
-    )
-
-    return weekly_moisture_fig, weekly_temp_fig
+    return style_figure(weekly_moisture_fig, "Weekly Moisture Trend", "Moisture (%)"), style_figure(weekly_temp_fig, "Weekly Temperature Trend", "Temperature (°F)")
 
 
 def build_monthly_figures(session, rules_dict):
     monthly_moisture_fig = go.Figure()
     monthly_temp_fig = go.Figure()
-
     added_band = False
 
     for plant, feed_key in FEEDS.items():
         try:
-            times, moisture_vals, temp_vals = get_history_for_days(
-                feed_key, session, days=30, limit=1000
-            )
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=30, limit=1000)
             times_m, moisture_vals_ds = downsample_data(times, moisture_vals, step=10)
             times_t, temp_vals_ds = downsample_data(times, temp_vals, step=10)
 
             if times_m:
-                monthly_moisture_fig.add_trace(
-                    go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant)
-                )
+                monthly_moisture_fig.add_trace(go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant))
                 if not added_band:
                     add_ideal_band(monthly_moisture_fig, plant, rules_dict)
                     added_band = True
 
             if times_t:
-                monthly_temp_fig.add_trace(
-                    go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant)
-                )
-
+                monthly_temp_fig.add_trace(go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant))
         except Exception as e:
             print(f"Failed monthly history for {plant}: {e}", flush=True)
 
-    monthly_moisture_fig.update_layout(
-        title="Monthly Moisture Trend (Last 30 Days)",
-        xaxis_title="Time",
-        yaxis_title="Moisture (%)",
-        template="plotly_white",
-        height=450,
-    )
+    return style_figure(monthly_moisture_fig, "Monthly Moisture Trend", "Moisture (%)"), style_figure(monthly_temp_fig, "Monthly Temperature Trend", "Temperature (°F)")
 
-    monthly_temp_fig.update_layout(
-        title="Monthly Temperature Trend (Last 30 Days)",
-        xaxis_title="Time",
-        yaxis_title="Temperature (°F)",
-        template="plotly_white",
-        height=450,
-    )
 
-    return monthly_moisture_fig, monthly_temp_fig
-
-# -----------------------------
-# Dash app
-# -----------------------------
 app = Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
 app.title = "Soil Monitor Dashboard"
-
 
 @server.route("/download-csv")
 def download_csv():
@@ -791,45 +725,65 @@ def download_csv():
         download_name="plant_readings.csv",
     )
 
-
 plant_names = list(FEEDS.keys())
 
 app.layout = html.Div(
-    style={
-        "fontFamily": "Arial, sans-serif",
-        "padding": "20px",
-        "backgroundColor": "#f7f7f7",
-    },
+    style=PAGE_STYLE,
     children=[
-        dcc.Store(
-            id="plant-rules-store",
-            storage_type="local",
-            data=DEFAULT_PLANT_RULES,
-        ),
-
-        html.H1("Plant Soil Monitor"),
-        html.Div(id="system-status"),
-        html.Div(id="alert-banner"),
-
-        dcc.Interval(id="refresh", interval=30000, n_intervals=0),
-
         html.Div(
-            [make_card(plant) for plant in plant_names],
-            style={"display": "flex", "flexWrap": "wrap", "gap": "8px"},
-        ),
-
-        dcc.Tabs(
-            id="view-tabs",
-            value="live",
+            style=CONTAINER_STYLE,
             children=[
-                dcc.Tab(label="Live", value="live"),
-                dcc.Tab(label="Weekly", value="weekly"),
-                dcc.Tab(label="Monthly", value="monthly"),
-                dcc.Tab(label="Settings", value="settings"),
-            ],
-        ),
+                html.Div(
+                    style=HEADER_PANEL_STYLE,
+                    children=[
+                        html.H1("Plant Soil Monitor", style={"margin": "0 0 8px 0", "fontSize": "2rem"}),
+                        html.P(
+                            "Track moisture, temperature, alerts, and logging for all plants in one place.",
+                            style={"margin": "0", "opacity": "0.92", "fontSize": "1.05rem"},
+                        ),
+                    ],
+                ),
 
-        html.Div(id="tab-content"),
+                dcc.Store(
+                    id="plant-rules-store",
+                    storage_type="local",
+                    data=DEFAULT_PLANT_RULES,
+                ),
+
+                html.Div(id="system-status"),
+                html.Div(id="alert-banner"),
+
+                dcc.Interval(id="refresh", interval=30000, n_intervals=0),
+
+                html.Div(
+                    [make_card(plant) for plant in plant_names],
+                    style={
+                        "display": "flex",
+                        "flexWrap": "wrap",
+                        "gap": "14px",
+                        "marginBottom": "18px",
+                    },
+                ),
+
+                dcc.Tabs(
+                    id="view-tabs",
+                    value="live",
+                    colors={
+                        "border": "#d7e2dc",
+                        "primary": "#2e7d5a",
+                        "background": "#f7faf8",
+                    },
+                    children=[
+                        dcc.Tab(label="Live", value="live", style={"padding": "12px", "fontWeight": "600"}, selected_style={"padding": "12px", "fontWeight": "700"}),
+                        dcc.Tab(label="Weekly", value="weekly", style={"padding": "12px", "fontWeight": "600"}, selected_style={"padding": "12px", "fontWeight": "700"}),
+                        dcc.Tab(label="Monthly", value="monthly", style={"padding": "12px", "fontWeight": "600"}, selected_style={"padding": "12px", "fontWeight": "700"}),
+                        dcc.Tab(label="Settings", value="settings", style={"padding": "12px", "fontWeight": "600"}, selected_style={"padding": "12px", "fontWeight": "700"}),
+                    ],
+                ),
+
+                html.Div(id="tab-content", style={"marginTop": "16px"}),
+            ],
+        )
     ],
 )
 
@@ -860,11 +814,7 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
         if not (0 <= dry <= low <= high <= 100):
             return no_update, f"Invalid values for {plant}. Must satisfy dry ≤ ideal low ≤ ideal high."
 
-        new_rules[plant] = {
-            "dry": dry,
-            "ideal_low": low,
-            "ideal_high": high,
-        }
+        new_rules[plant] = {"dry": dry, "ideal_low": low, "ideal_high": high}
 
     alert_state = {plant: False for plant in FEEDS}
     offline_alert_state = {plant: False for plant in FEEDS}
@@ -893,9 +843,7 @@ def send_test_ntfy_message(n_clicks):
         tags=["white_check_mark", "seedling"],
     )
 
-    if ok:
-        return "ntfy test notification sent."
-    return "ntfy test failed. Check Render logs."
+    return "ntfy test notification sent." if ok else "ntfy test failed. Check Render logs."
 
 
 @app.callback(
@@ -930,17 +878,10 @@ def update_cards(n, rules_dict):
             raw_val = payload.get("raw")
             raw = int(raw_val) if raw_val is not None else None
 
-            ts = (
-                datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                if created_at
-                else None
-            )
-
+            ts = datetime.fromisoformat(created_at.replace("Z", "+00:00")) if created_at else None
             offline = maybe_send_offline_alert(plant, ts)
 
-            recommendation, rec_color, bg_color = get_watering_recommendation(
-                plant, moisture, rules_dict
-            )
+            recommendation, rec_color, bg_color = get_watering_recommendation(plant, moisture, rules_dict)
 
             if offline:
                 recommendation = "Sensor offline"
@@ -973,7 +914,6 @@ def update_cards(n, rules_dict):
 
             if recommendation == "Water now" and not offline:
                 dry_alerts.append(plant)
-
             if offline:
                 offline_alerts.append(plant)
 
@@ -982,35 +922,49 @@ def update_cards(n, rules_dict):
             if ts is not None:
                 age_minutes = (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
                 sensor_status_text = f"Reading age: {age_minutes:.0f} min"
+                last_update_text = ts.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
             else:
                 sensor_status_text = "Reading age: unknown"
+                last_update_text = "--"
 
             cards.append([
                 html.Div(
                     [
-                        html.H3(plant, style={"marginTop": "0"}),
-                        html.P(f"Moisture: {moisture:.1f} %"),
-                        html.P(f"Temperature: {temp_f:.2f} °F"),
-                        html.P(f"Raw: {raw if raw is not None else '--'}"),
-                        html.P(
-                            f"Recommendation: {recommendation}",
-                            style={"fontWeight": "bold", "color": rec_color},
+                        html.Div(
+                            [
+                                html.H3(plant, style={"margin": "0", "fontSize": "1.15rem"}),
+                                html.Div(
+                                    recommendation,
+                                    style={
+                                        "padding": "6px 10px",
+                                        "borderRadius": "999px",
+                                        "backgroundColor": "rgba(255,255,255,0.7)",
+                                        "border": f"1px solid {rec_color}",
+                                        "color": rec_color,
+                                        "fontWeight": "700",
+                                        "fontSize": "0.85rem",
+                                    },
+                                ),
+                            ],
+                            style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "14px"},
                         ),
-                        html.P(
-                            sensor_status_text,
-                            style={"color": "#666", "fontSize": "0.9rem"},
+                        html.Div(
+                            [
+                                html.Div([html.Div("Moisture", style={"color": "#5b6b63", "fontSize": "0.85rem"}), html.Div(f"{moisture:.1f} %", style={"fontSize": "1.3rem", "fontWeight": "700"})], style={"flex": "1"}),
+                                html.Div([html.Div("Temp", style={"color": "#5b6b63", "fontSize": "0.85rem"}), html.Div(f"{temp_f:.2f} °F", style={"fontSize": "1.3rem", "fontWeight": "700"})], style={"flex": "1"}),
+                            ],
+                            style={"display": "flex", "gap": "12px", "marginBottom": "12px"},
                         ),
-                        html.P(
-                            f"Last update: {ts.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}" if ts else "Last update: --",
-                            style={"color": "#666", "fontSize": "0.9rem"},
-                        ),
+                        html.Div(f"Raw: {raw if raw is not None else '--'}", style={"marginBottom": "8px", "color": "#47554e"}),
+                        html.Div(sensor_status_text, style={"marginBottom": "6px", "color": "#5b6b63", "fontSize": "0.92rem"}),
+                        html.Div(f"Last update: {last_update_text}", style={"color": "#5b6b63", "fontSize": "0.92rem"}),
                     ],
                     style={
                         "backgroundColor": bg_color,
                         "border": f"2px solid {rec_color}",
-                        "borderRadius": "12px",
-                        "padding": "14px",
-                        "minHeight": "230px",
+                        "borderRadius": "18px",
+                        "padding": "16px",
+                        "minHeight": "220px",
                     },
                 )
             ])
@@ -1031,28 +985,19 @@ def update_cards(n, rules_dict):
                 html.Div(
                     [
                         html.H3(plant, style={"marginTop": "0"}),
-                        html.P("Moisture: --"),
-                        html.P("Temperature: --"),
-                        html.P("Raw: --"),
-                        html.P(
-                            "Recommendation: No data",
-                            style={"fontWeight": "bold", "color": "#666666"},
-                        ),
-                        html.P(
-                            "Reading age: unknown",
-                            style={"color": "#666", "fontSize": "0.9rem"},
-                        ),
-                        html.P(
-                            "Last update: --",
-                            style={"color": "#666", "fontSize": "0.9rem"},
-                        ),
+                        html.Div("No data", style={"fontWeight": "700", "color": "#666666", "marginBottom": "10px"}),
+                        html.Div("Moisture: --"),
+                        html.Div("Temperature: --"),
+                        html.Div("Raw: --"),
+                        html.Div("Reading age: unknown", style={"marginTop": "10px", "color": "#666", "fontSize": "0.92rem"}),
+                        html.Div("Last update: --", style={"color": "#666", "fontSize": "0.92rem"}),
                     ],
                     style={
                         "backgroundColor": "#f5f5f5",
                         "border": "2px solid #cccccc",
-                        "borderRadius": "12px",
-                        "padding": "14px",
-                        "minHeight": "230px",
+                        "borderRadius": "18px",
+                        "padding": "16px",
+                        "minHeight": "220px",
                     },
                 )
             ])
@@ -1069,30 +1014,12 @@ def update_cards(n, rules_dict):
 
     status = html.Div(
         [
-            html.P(
-                f"Last dashboard refresh: {refresh_time} | Plants fetched: {successful_fetches}/{len(FEEDS)} | Notifications: {notify_text}",
-                style={
-                    "marginBottom": "12px",
-                    "padding": "10px 14px",
-                    "backgroundColor": "#ffffff",
-                    "border": "1px solid #ddd",
-                    "borderRadius": "10px",
-                    "display": "inline-block",
-                    "marginRight": "10px",
-                },
-            ),
-            html.P(
-                f"CSV: {last_csv_status}",
-                style={
-                    "marginBottom": "12px",
-                    "padding": "10px 14px",
-                    "backgroundColor": "#ffffff",
-                    "border": "1px solid #ddd",
-                    "borderRadius": "10px",
-                    "display": "inline-block",
-                },
-            ),
-        ]
+            html.Div(f"Last refresh: {refresh_time}", style=CHIP_STYLE),
+            html.Div(f"Plants fetched: {successful_fetches}/{len(FEEDS)}", style=CHIP_STYLE),
+            html.Div(f"Notifications: {notify_text}", style=CHIP_STYLE),
+            html.Div(f"CSV: {last_csv_status}", style=CHIP_STYLE),
+        ],
+        style={**SECTION_STYLE, "marginBottom": "16px"},
     )
 
     if offline_alerts and dry_alerts:
@@ -1105,10 +1032,11 @@ def update_cards(n, rules_dict):
                 "backgroundColor": "#fff4e5",
                 "color": "#8a5a00",
                 "border": "1px solid #f0d9a7",
-                "padding": "12px 16px",
-                "borderRadius": "10px",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
                 "marginBottom": "16px",
-                "fontWeight": "bold",
+                "fontWeight": "700",
+                "boxShadow": "0 6px 16px rgba(0,0,0,0.04)",
             },
         )
     elif offline_alerts:
@@ -1118,10 +1046,11 @@ def update_cards(n, rules_dict):
                 "backgroundColor": "#f2f2f2",
                 "color": "#555",
                 "border": "1px solid #d6d6d6",
-                "padding": "12px 16px",
-                "borderRadius": "10px",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
                 "marginBottom": "16px",
-                "fontWeight": "bold",
+                "fontWeight": "700",
+                "boxShadow": "0 6px 16px rgba(0,0,0,0.04)",
             },
         )
     elif dry_alerts:
@@ -1131,10 +1060,11 @@ def update_cards(n, rules_dict):
                 "backgroundColor": "#ffeaea",
                 "color": "#a94442",
                 "border": "1px solid #ebccd1",
-                "padding": "12px 16px",
-                "borderRadius": "10px",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
                 "marginBottom": "16px",
-                "fontWeight": "bold",
+                "fontWeight": "700",
+                "boxShadow": "0 6px 16px rgba(0,0,0,0.04)",
             },
         )
     else:
@@ -1144,10 +1074,11 @@ def update_cards(n, rules_dict):
                 "backgroundColor": "#eef9ee",
                 "color": "#2f6b2f",
                 "border": "1px solid #cfe9cf",
-                "padding": "12px 16px",
-                "borderRadius": "10px",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
                 "marginBottom": "16px",
-                "fontWeight": "bold",
+                "fontWeight": "700",
+                "boxShadow": "0 6px 16px rgba(0,0,0,0.04)",
             },
         )
 
@@ -1169,14 +1100,29 @@ def render_tab(tab, n, rules_dict):
 
     if tab == "live":
         moisture_fig, temp_fig = build_live_figures(session, rules_dict)
-        return html.Div([dcc.Graph(figure=moisture_fig), dcc.Graph(figure=temp_fig)])
+        return html.Div(
+            [
+                html.Div(dcc.Graph(figure=moisture_fig), style=SECTION_STYLE),
+                html.Div(dcc.Graph(figure=temp_fig), style={**SECTION_STYLE, "marginTop": "16px"}),
+            ]
+        )
 
     if tab == "weekly":
         weekly_moisture_fig, weekly_temp_fig = build_weekly_figures(session, rules_dict)
-        return html.Div([dcc.Graph(figure=weekly_moisture_fig), dcc.Graph(figure=weekly_temp_fig)])
+        return html.Div(
+            [
+                html.Div(dcc.Graph(figure=weekly_moisture_fig), style=SECTION_STYLE),
+                html.Div(dcc.Graph(figure=weekly_temp_fig), style={**SECTION_STYLE, "marginTop": "16px"}),
+            ]
+        )
 
     monthly_moisture_fig, monthly_temp_fig = build_monthly_figures(session, rules_dict)
-    return html.Div([dcc.Graph(figure=monthly_moisture_fig), dcc.Graph(figure=monthly_temp_fig)])
+    return html.Div(
+        [
+            html.Div(dcc.Graph(figure=monthly_moisture_fig), style=SECTION_STYLE),
+            html.Div(dcc.Graph(figure=monthly_temp_fig), style={**SECTION_STYLE, "marginTop": "16px"}),
+        ]
+    )
 
 
 if __name__ == "__main__":
