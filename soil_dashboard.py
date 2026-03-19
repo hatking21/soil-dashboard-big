@@ -18,8 +18,8 @@ AIO_KEY = os.getenv("AIO_KEY")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC")
 NTFY_BASE_URL = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
 
-# CSV logging
-CSV_LOG_PATH = os.getenv("CSV_LOG_PATH", "plant_readings.csv")
+# CSV logging (Option B: server-side path for Render/Linux)
+CSV_LOG_PATH = os.getenv("CSV_LOG_PATH", "/opt/render/project/src/plant_readings.csv")
 
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
@@ -142,7 +142,15 @@ def get_watering_recommendation(plant, moisture, rules_dict):
         return "Wet / hold off", "#5bc0de", "#eefbff"
 
 
+def ensure_csv_directory_exists():
+    directory = os.path.dirname(CSV_LOG_PATH)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+
+
 def ensure_csv_exists():
+    ensure_csv_directory_exists()
+
     if not os.path.exists(CSV_LOG_PATH):
         with open(CSV_LOG_PATH, mode="w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -225,6 +233,33 @@ def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_o
         return
 
     maybe_prune_csv_file()
+
+
+def get_csv_row_count():
+    if not os.path.exists(CSV_LOG_PATH):
+        return 0
+
+    try:
+        with open(CSV_LOG_PATH, mode="r", newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+            return max(0, len(rows) - 1)
+    except Exception as e:
+        print(f"Failed to count CSV rows: {e}", flush=True)
+        return 0
+
+
+def get_csv_last_write_time():
+    if not os.path.exists(CSV_LOG_PATH):
+        return "Not created yet"
+
+    try:
+        ts = os.path.getmtime(CSV_LOG_PATH)
+        dt_local = datetime.fromtimestamp(ts, tz=LOCAL_TZ)
+        return dt_local.strftime("%Y-%m-%d %I:%M:%S %p")
+    except Exception as e:
+        print(f"Failed to get CSV last write time: {e}", flush=True)
+        return "Unavailable"
 
 
 def should_log_reading(plant, moisture):
@@ -456,6 +491,8 @@ def build_settings_panel(rules_dict):
         html.P(f"Sensor offline threshold: {SENSOR_OFFLINE_MINUTES} minutes"),
         html.P(f"CSV retention: {CSV_RETENTION_DAYS} days"),
         html.P(f"CSV file: {CSV_LOG_PATH}"),
+        html.P(f"CSV row count: {get_csv_row_count()}"),
+        html.P(f"CSV last write: {get_csv_last_write_time()}"),
     ]
 
     for plant in FEEDS:
@@ -562,6 +599,7 @@ def build_settings_panel(rules_dict):
     children.append(html.Div(id="ntfy-test-status", style={"marginTop": "10px"}))
 
     return html.Div(children)
+
 
 # -----------------------------
 # Figure builders
@@ -708,6 +746,7 @@ def build_monthly_figures(session, rules_dict):
     )
 
     return monthly_moisture_fig, monthly_temp_fig
+
 
 # -----------------------------
 # Dash app
