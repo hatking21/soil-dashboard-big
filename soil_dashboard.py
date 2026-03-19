@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
+from flask import send_file
 from dash import Dash, html, dcc, Input, Output, State, ALL, no_update
 import plotly.graph_objects as go
 
@@ -590,15 +591,19 @@ def build_settings_panel(rules_dict):
                         "marginRight": "12px",
                     },
                 ),
-                html.Button(
+                html.A(
                     "Download CSV",
-                    id="download-csv-button",
-                    n_clicks=0,
+                    href="/download-csv",
+                    target="_blank",
                     style={
+                        "display": "inline-block",
                         "padding": "10px 16px",
                         "borderRadius": "8px",
                         "border": "1px solid #888",
                         "cursor": "pointer",
+                        "textDecoration": "none",
+                        "color": "black",
+                        "backgroundColor": "#f7f7f7",
                     },
                 ),
             ],
@@ -765,6 +770,19 @@ app = Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
 app.title = "Soil Monitor Dashboard"
 
+
+@server.route("/download-csv")
+def download_csv():
+    ensure_csv_exists()
+    maybe_prune_csv_file()
+    return send_file(
+        CSV_LOG_PATH,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="plant_readings.csv",
+    )
+
+
 plant_names = list(FEEDS.keys())
 
 app.layout = html.Div(
@@ -779,7 +797,6 @@ app.layout = html.Div(
             storage_type="local",
             data=DEFAULT_PLANT_RULES,
         ),
-        dcc.Download(id="download-csv"),
 
         html.H1("Plant Soil Monitor"),
         html.Div(id="system-status"),
@@ -870,17 +887,6 @@ def send_test_ntfy_message(n_clicks):
     if ok:
         return "ntfy test notification sent."
     return "ntfy test failed. Check Render logs."
-
-
-@app.callback(
-    Output("download-csv", "data"),
-    Input("download-csv-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def download_csv_file(n_clicks):
-    ensure_csv_exists()
-    maybe_prune_csv_file()
-    return dcc.send_file(CSV_LOG_PATH)
 
 
 @app.callback(
