@@ -1,5 +1,6 @@
 import os
 import json
+import csv
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -12,11 +13,13 @@ import plotly.graph_objects as go
 # -----------------------------
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
-SHEETS_WEBHOOK_URL = os.getenv("SHEETS_WEBHOOK_URL")
 
 # ntfy notifications
 NTFY_TOPIC = os.getenv("NTFY_TOPIC")
 NTFY_BASE_URL = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
+
+# CSV logging
+CSV_LOG_PATH = os.getenv("CSV_LOG_PATH", "plant_readings.csv")
 
 if not AIO_USERNAME or not AIO_KEY:
     raise ValueError("Missing AIO_USERNAME or AIO_KEY environment variables")
@@ -37,8 +40,10 @@ LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 # -----------------------------
 # Logging / notification settings
 # -----------------------------
-SHEETS_LOG_INTERVAL = 300   # 5 min
+CSV_LOG_INTERVAL = 300      # 5 min
 MIN_MOISTURE_CHANGE = 2.0   # percent
+CSV_RETENTION_DAYS = 35
+
 NTFY_MIN_INTERVAL = 60      # seconds between notifications
 SENSOR_OFFLINE_MINUTES = 60
 
@@ -50,9 +55,7 @@ alert_state = {plant: False for plant in FEEDS}
 offline_alert_state = {plant: False for plant in FEEDS}
 last_daily_summary_date = None
 last_ntfy_sent_at = None
-
-if not SHEETS_WEBHOOK_URL:
-    print("Warning: SHEETS_WEBHOOK_URL not set — Google Sheets backup disabled", flush=True)
+last_csv_prune_date = None
 
 if not NTFY_TOPIC:
     print("Warning: NTFY_TOPIC not set — ntfy notifications disabled", flush=True)
@@ -139,32 +142,99 @@ def get_watering_recommendation(plant, moisture, rules_dict):
         return "Wet / hold off", "#5bc0de", "#eefbff"
 
 
-def log_to_google_sheets(timestamp, plant, moisture, temp_f, raw):
-    if not SHEETS_WEBHOOK_URL:
+def ensure_csv_exists():
+    if not os.path.exists(CSV_LOG_PATH):
+        with open(CSV_LOG_PATH, mode="w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "timestamp_utc",
+                "plant",
+                "moisture_pct",
+                "temp_f",
+                "raw",
+                "recommendation",
+                "sensor_offline",
+            ])
+
+
+def prune_csv_file():
+    if not os.path.exists(CSV_LOG_PATH):
         return
 
-    payload = {
-        "timestamp": timestamp.isoformat(),
-        "plant": plant,
-        "moisture_pct": moisture,
-        "temp_f": temp_f,
-        "raw": raw,
-    }
+    cutoff = datetime.now(timezone.utc) - timedelta(days=CSV_RETENTION_DAYS)
+    kept_rows = []
 
     try:
-        requests.post(SHEETS_WEBHOOK_URL, json=payload, timeout=15)
+        with open(CSV_LOG_PATH, mode="r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+
+            if not fieldnames:
+                return
+
+            for row in reader:
+                ts_text = row.get("timestamp_utc")
+                if not ts_text:
+                    continue
+
+                try:
+                    ts = datetime.fromisoformat(ts_text)
+                except ValueError:
+                    continue
+
+                if ts >= cutoff:
+                    kept_rows.append(row)
+
+        with open(CSV_LOG_PATH, mode="w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(kept_rows)
+
     except Exception as e:
-        print(f"Failed to log to Google Sheets for {plant}: {e}", flush=True)
+        print(f"Failed to prune CSV file: {e}", flush=True)
 
 
-def should_log_to_sheets(plant, moisture):
+def maybe_prune_csv_file():
+    global last_csv_prune_date
+
+    today = datetime.now(timezone.utc).date()
+    if last_csv_prune_date == today:
+        return
+
+    prune_csv_file()
+    last_csv_prune_date = today
+
+
+def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_offline):
+    ensure_csv_exists()
+
+    try:
+        with open(CSV_LOG_PATH, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                timestamp.isoformat(),
+                plant,
+                moisture,
+                temp_f,
+                raw,
+                recommendation,
+                sensor_offline,
+            ])
+    except Exception as e:
+        print(f"Failed to log to CSV for {plant}: {e}", flush=True)
+        return
+
+    maybe_prune_csv_file()
+
+
+def should_log_reading(plant, moisture):
     now = datetime.now(timezone.utc)
     last_time = last_logged_time[plant]
     last_m = last_logged_moisture[plant]
 
     enough_time = (
         last_time is None or
-        (now - last_time).total_seconds() >= SHEETS_LOG_INTERVAL
+        (now - last_time).total_seconds() >= CSV_LOG_INTERVAL
     )
 
     enough_change = (
@@ -384,6 +454,8 @@ def build_settings_panel(rules_dict):
         html.H3("Plant Threshold Settings"),
         html.P("These settings are stored in this browser."),
         html.P(f"Sensor offline threshold: {SENSOR_OFFLINE_MINUTES} minutes"),
+        html.P(f"CSV retention: {CSV_RETENTION_DAYS} days"),
+        html.P(f"CSV file: {CSV_LOG_PATH}"),
     ]
 
     for plant in FEEDS:
@@ -473,6 +545,18 @@ def build_settings_panel(rules_dict):
                 html.Button(
                     "Send ntfy Test Message",
                     id="ntfy-test-button",
+                    n_clicks=0,
+                    style={
+                        "padding": "10px 16px",
+                        "borderRadius": "8px",
+                        "border": "1px solid #888",
+                        "cursor": "pointer",
+                        "marginRight": "12px",
+                    },
+                ),
+                html.Button(
+                    "Download CSV",
+                    id="download-csv-button",
                     n_clicks=0,
                     style={
                         "padding": "10px 16px",
@@ -658,6 +742,7 @@ app.layout = html.Div(
             storage_type="local",
             data=DEFAULT_PLANT_RULES,
         ),
+        dcc.Download(id="download-csv"),
 
         html.H1("Plant Soil Monitor"),
         html.Div(id="system-status"),
@@ -751,6 +836,17 @@ def send_test_ntfy_message(n_clicks):
 
 
 @app.callback(
+    Output("download-csv", "data"),
+    Input("download-csv-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_csv_file(n_clicks):
+    ensure_csv_exists()
+    maybe_prune_csv_file()
+    return dcc.send_file(CSV_LOG_PATH)
+
+
+@app.callback(
     [Output(f"card-{plant}", "children") for plant in plant_names]
     + [Output("system-status", "children"), Output("alert-banner", "children")],
     [Input("refresh", "n_intervals"), Input("plant-rules-store", "data")],
@@ -807,13 +903,15 @@ def update_cards(n, rules_dict):
                 "timestamp": ts.isoformat() if ts else None,
             }
 
-            if should_log_to_sheets(plant, moisture):
-                log_to_google_sheets(
-                    ts or datetime.now(timezone.utc),
-                    plant,
-                    moisture,
-                    temp_f,
-                    raw,
+            if should_log_reading(plant, moisture):
+                log_to_csv(
+                    timestamp=ts or datetime.now(timezone.utc),
+                    plant=plant,
+                    moisture=moisture,
+                    temp_f=temp_f,
+                    raw=raw,
+                    recommendation=recommendation,
+                    sensor_offline=offline,
                 )
 
             if not offline:
@@ -1018,4 +1116,6 @@ def render_tab(tab, n, rules_dict):
 
 
 if __name__ == "__main__":
+    ensure_csv_exists()
+    maybe_prune_csv_file()
     app.run(host="0.0.0.0", port=10000, debug=False)
