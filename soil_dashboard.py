@@ -56,6 +56,7 @@ offline_alert_state = {plant: False for plant in FEEDS}
 last_daily_summary_date = None
 last_ntfy_sent_at = None
 last_csv_prune_date = None
+last_csv_status = "No CSV writes yet"
 
 if not NTFY_TOPIC:
     print("Warning: NTFY_TOPIC not set — ntfy notifications disabled", flush=True)
@@ -214,6 +215,8 @@ def maybe_prune_csv_file():
 
 
 def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_offline):
+    global last_csv_status
+
     ensure_csv_exists()
 
     try:
@@ -228,11 +231,16 @@ def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_o
                 recommendation,
                 sensor_offline,
             ])
-    except Exception as e:
-        print(f"Failed to log to CSV for {plant}: {e}", flush=True)
-        return
 
-    maybe_prune_csv_file()
+        maybe_prune_csv_file()
+        last_csv_status = (
+            f"Last write OK: {plant} at "
+            f"{datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
+        )
+
+    except Exception as e:
+        last_csv_status = f"Last write failed: {e}"
+        print(f"Failed to log to CSV for {plant}: {e}", flush=True)
 
 
 def get_csv_row_count():
@@ -493,6 +501,7 @@ def build_settings_panel(rules_dict):
         html.P(f"CSV file: {CSV_LOG_PATH}"),
         html.P(f"CSV row count: {get_csv_row_count()}"),
         html.P(f"CSV last write: {get_csv_last_write_time()}"),
+        html.P(f"CSV status: {last_csv_status}"),
     ]
 
     for plant in FEEDS:
@@ -1069,8 +1078,20 @@ def update_cards(n, rules_dict):
                     "border": "1px solid #ddd",
                     "borderRadius": "10px",
                     "display": "inline-block",
+                    "marginRight": "10px",
                 },
-            )
+            ),
+            html.P(
+                f"CSV: {last_csv_status}",
+                style={
+                    "marginBottom": "12px",
+                    "padding": "10px 14px",
+                    "backgroundColor": "#ffffff",
+                    "border": "1px solid #ddd",
+                    "borderRadius": "10px",
+                    "display": "inline-block",
+                },
+            ),
         ]
     )
 
