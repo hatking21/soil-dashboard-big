@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
-from dash import Dash, html, dcc, Input, Output, State, ALL, no_update, dash_table
+from dash import Dash, html, dcc, Input, Output, State, ALL, no_update
 import plotly.graph_objects as go
 
 # -----------------------------
@@ -259,33 +259,6 @@ def get_csv_last_write_time():
     except Exception as e:
         print(f"Failed to get CSV last write time: {e}", flush=True)
         return "Unavailable"
-
-
-def read_csv_for_table(limit=1000):
-    ensure_csv_exists()
-    maybe_prune_csv_file()
-
-    rows = []
-    try:
-        with open(CSV_LOG_PATH, mode="r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                rows.append(row)
-    except Exception as e:
-        print(f"Failed to read CSV table: {e}", flush=True)
-        return [], []
-
-    rows = rows[-limit:]
-    columns = [{"name": key, "id": key} for key in rows[0].keys()] if rows else [
-        {"name": "timestamp_utc", "id": "timestamp_utc"},
-        {"name": "plant", "id": "plant"},
-        {"name": "moisture_pct", "id": "moisture_pct"},
-        {"name": "temp_f", "id": "temp_f"},
-        {"name": "raw", "id": "raw"},
-        {"name": "recommendation", "id": "recommendation"},
-        {"name": "sensor_offline", "id": "sensor_offline"},
-    ]
-    return rows, columns
 
 
 def should_log_reading(plant, moisture):
@@ -639,36 +612,6 @@ def build_settings_panel(rules_dict):
     return html.Div(children)
 
 
-def build_csv_viewer():
-    rows, columns = read_csv_for_table(limit=1000)
-
-    return html.Div(
-        [
-            html.H3("CSV Viewer"),
-            html.P(f"Showing up to the last {min(len(rows), 1000)} rows."),
-            dash_table.DataTable(
-                data=rows,
-                columns=columns,
-                page_size=20,
-                sort_action="native",
-                filter_action="native",
-                style_table={"overflowX": "auto"},
-                style_cell={
-                    "textAlign": "left",
-                    "padding": "8px",
-                    "fontFamily": "Arial, sans-serif",
-                    "fontSize": "14px",
-                    "whiteSpace": "normal",
-                    "height": "auto",
-                },
-                style_header={
-                    "backgroundColor": "#f2f2f2",
-                    "fontWeight": "bold",
-                },
-            ),
-        ]
-    )
-
 # -----------------------------
 # Figure builders
 # -----------------------------
@@ -856,7 +799,6 @@ app.layout = html.Div(
                 dcc.Tab(label="Live", value="live"),
                 dcc.Tab(label="Weekly", value="weekly"),
                 dcc.Tab(label="Monthly", value="monthly"),
-                dcc.Tab(label="CSV Viewer", value="csv"),
                 dcc.Tab(label="Settings", value="settings"),
             ],
         ),
@@ -1195,9 +1137,6 @@ def render_tab(tab, n, rules_dict):
 
     if tab == "settings":
         return build_settings_panel(rules_dict)
-
-    if tab == "csv":
-        return build_csv_viewer()
 
     session = make_session()
 
