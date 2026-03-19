@@ -551,18 +551,6 @@ def build_settings_panel(rules_dict):
                         "borderRadius": "8px",
                         "border": "1px solid #888",
                         "cursor": "pointer",
-                        "marginRight": "12px",
-                    },
-                ),
-                html.Button(
-                    "Download CSV",
-                    id="download-csv-button",
-                    n_clicks=0,
-                    style={
-                        "padding": "10px 16px",
-                        "borderRadius": "8px",
-                        "border": "1px solid #888",
-                        "cursor": "pointer",
                     },
                 ),
             ],
@@ -742,7 +730,6 @@ app.layout = html.Div(
             storage_type="local",
             data=DEFAULT_PLANT_RULES,
         ),
-        dcc.Download(id="download-csv"),
 
         html.H1("Plant Soil Monitor"),
         html.Div(id="system-status"),
@@ -833,17 +820,6 @@ def send_test_ntfy_message(n_clicks):
     if ok:
         return "ntfy test notification sent."
     return "ntfy test failed. Check Render logs."
-
-
-@app.callback(
-    Output("download-csv", "data"),
-    Input("download-csv-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def download_csv_file(n_clicks):
-    ensure_csv_exists()
-    maybe_prune_csv_file()
-    return dcc.send_file(CSV_LOG_PATH)
 
 
 @app.callback(
