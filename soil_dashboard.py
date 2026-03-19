@@ -45,8 +45,15 @@ CSV_RETENTION_DAYS = 35
 NTFY_MIN_INTERVAL = 60
 SENSOR_OFFLINE_MINUTES = 60
 
+# Watering detection
+WATERING_JUMP_THRESHOLD = 8.0
+
 last_logged_time = {plant: None for plant in FEEDS}
 last_logged_moisture = {plant: None for plant in FEEDS}
+
+last_seen_moisture = {plant: None for plant in FEEDS}
+last_seen_timestamp = {plant: None for plant in FEEDS}
+last_watered_time = {plant: None for plant in FEEDS}
 
 alert_state = {plant: False for plant in FEEDS}
 offline_alert_state = {plant: False for plant in FEEDS}
@@ -77,14 +84,6 @@ PAGE_STYLE = {
 CONTAINER_STYLE = {
     "maxWidth": "1280px",
     "margin": "0 auto",
-}
-
-CARD_SHELL_STYLE = {
-    "borderRadius": "18px",
-    "padding": "16px",
-    "backgroundColor": "white",
-    "boxShadow": "0 8px 24px rgba(25, 40, 35, 0.08)",
-    "border": "1px solid rgba(0,0,0,0.06)",
 }
 
 HEADER_PANEL_STYLE = {
@@ -180,6 +179,25 @@ def get_history_for_days(feed_key, session, days, limit=1000):
             temp_vals.append(temp_f)
 
     return times, moisture_vals, temp_vals
+
+
+def get_axis_range(values, pad=5, min_floor=0, max_cap=None):
+    if not values:
+        return None
+
+    vmin = min(values)
+    vmax = max(values)
+
+    low = max(min_floor, vmin - pad)
+    high = vmax + pad
+
+    if max_cap is not None:
+        high = min(max_cap, high)
+
+    if high <= low:
+        high = low + 1
+
+    return [low, high]
 
 
 def downsample_data(times, values, step=5):
@@ -286,10 +304,7 @@ def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_o
                 sensor_offline,
             ])
         maybe_prune_csv_file()
-        last_csv_status = (
-            f"Last write OK: {plant} at "
-            f"{datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
-        )
+        last_csv_status = f"Last write OK: {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
     except Exception as e:
         last_csv_status = f"Last write failed: {e}"
         print(f"Failed to log to CSV for {plant}: {e}", flush=True)
@@ -333,6 +348,35 @@ def should_log_reading(plant, moisture):
         last_logged_moisture[plant] = moisture
         return True
     return False
+
+
+def update_last_watered_if_needed(plant, moisture, ts, offline):
+    previous_moisture = last_seen_moisture[plant]
+    previous_ts = last_seen_timestamp[plant]
+
+    if ts is None:
+        return
+
+    is_newer = previous_ts is None or ts > previous_ts
+
+    if (
+        not offline
+        and is_newer
+        and previous_moisture is not None
+        and (moisture - previous_moisture) >= WATERING_JUMP_THRESHOLD
+    ):
+        last_watered_time[plant] = ts
+
+    if is_newer:
+        last_seen_moisture[plant] = moisture
+        last_seen_timestamp[plant] = ts
+
+
+def format_last_watered(plant):
+    ts = last_watered_time[plant]
+    if ts is None:
+        return "Last watered: not detected yet"
+    return f"Last watered: {ts.astimezone(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
 
 
 def send_ntfy_alert(title, message, priority="default", tags=None):
@@ -498,7 +542,7 @@ def add_ideal_band(fig, plant, rules_dict):
     )
 
 
-def style_figure(fig, title, yaxis_title):
+def style_figure(fig, title, yaxis_title, yaxis_range=None):
     fig.update_layout(
         title={"text": title, "x": 0.02, "xanchor": "left"},
         xaxis_title="Time",
@@ -518,6 +562,8 @@ def style_figure(fig, title, yaxis_title):
     )
     fig.update_xaxes(showgrid=False)
     fig.update_yaxes(gridcolor="rgba(0,0,0,0.08)")
+    if yaxis_range is not None:
+        fig.update_yaxes(range=yaxis_range)
     return fig
 
 
@@ -535,6 +581,36 @@ def make_card(plant):
     )
 
 
+def build_moisture_bar(moisture, rec_color):
+    safe_moisture = max(0, min(100, moisture))
+    return html.Div(
+        [
+            html.Div("Moisture level", style={"color": "#5b6b63", "fontSize": "0.85rem", "marginBottom": "6px"}),
+            html.Div(
+                [
+                    html.Div(
+                        style={
+                            "width": f"{safe_moisture}%",
+                            "height": "100%",
+                            "background": f"linear-gradient(90deg, {rec_color}, {rec_color})",
+                            "borderRadius": "999px",
+                            "transition": "width 0.4s ease",
+                        }
+                    )
+                ],
+                style={
+                    "height": "12px",
+                    "backgroundColor": "#e9efeb",
+                    "borderRadius": "999px",
+                    "overflow": "hidden",
+                    "border": "1px solid rgba(0,0,0,0.06)",
+                },
+            ),
+        ],
+        style={"marginBottom": "14px"},
+    )
+
+
 def build_settings_panel(rules_dict):
     children = [
         html.H3("Plant Threshold Settings", style={"marginTop": "0"}),
@@ -542,6 +618,7 @@ def build_settings_panel(rules_dict):
         html.Div(
             [
                 html.Span(f"Sensor offline threshold: {SENSOR_OFFLINE_MINUTES} min", style=CHIP_STYLE),
+                html.Span(f"Watering jump threshold: {WATERING_JUMP_THRESHOLD:.1f}%", style=CHIP_STYLE),
                 html.Span(f"CSV retention: {CSV_RETENTION_DAYS} days", style=CHIP_STYLE),
                 html.Span(f"CSV rows: {get_csv_row_count()}", style=CHIP_STYLE),
             ]
@@ -644,26 +721,40 @@ def build_live_figures(session, rules_dict):
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
     added_band = False
+    all_moisture = []
+    all_temp = []
 
     for plant, feed_key in FEEDS.items():
         try:
-            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=1, limit=300)
+            times, moisture_vals, temp_vals = get_history_for_days(feed_key, session, days=(1 / 24), limit=300)
+
             if times:
                 moisture_fig.add_trace(go.Scatter(x=times, y=moisture_vals, mode="lines", name=plant))
                 temp_fig.add_trace(go.Scatter(x=times, y=temp_vals, mode="lines", name=plant))
+                all_moisture.extend(moisture_vals)
+                all_temp.extend(temp_vals)
+
                 if not added_band:
                     add_ideal_band(moisture_fig, plant, rules_dict)
                     added_band = True
         except Exception as e:
             print(f"Failed live history for {plant}: {e}", flush=True)
 
-    return style_figure(moisture_fig, "Live Moisture", "Moisture (%)"), style_figure(temp_fig, "Live Temperature", "Temperature (°F)")
+    moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
+    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=None)
+
+    return (
+        style_figure(moisture_fig, "Live Moisture (Last Hour)", "Moisture (%)", moisture_range),
+        style_figure(temp_fig, "Live Temperature (Last Hour)", "Temperature (°F)", temp_range),
+    )
 
 
 def build_weekly_figures(session, rules_dict):
     weekly_moisture_fig = go.Figure()
     weekly_temp_fig = go.Figure()
     added_band = False
+    all_moisture = []
+    all_temp = []
 
     for plant, feed_key in FEEDS.items():
         try:
@@ -673,22 +764,32 @@ def build_weekly_figures(session, rules_dict):
 
             if times_m:
                 weekly_moisture_fig.add_trace(go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant))
+                all_moisture.extend(moisture_vals_ds)
                 if not added_band:
                     add_ideal_band(weekly_moisture_fig, plant, rules_dict)
                     added_band = True
 
             if times_t:
                 weekly_temp_fig.add_trace(go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant))
+                all_temp.extend(temp_vals_ds)
         except Exception as e:
             print(f"Failed weekly history for {plant}: {e}", flush=True)
 
-    return style_figure(weekly_moisture_fig, "Weekly Moisture Trend", "Moisture (%)"), style_figure(weekly_temp_fig, "Weekly Temperature Trend", "Temperature (°F)")
+    moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
+    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=None)
+
+    return (
+        style_figure(weekly_moisture_fig, "Weekly Moisture Trend", "Moisture (%)", moisture_range),
+        style_figure(weekly_temp_fig, "Weekly Temperature Trend", "Temperature (°F)", temp_range),
+    )
 
 
 def build_monthly_figures(session, rules_dict):
     monthly_moisture_fig = go.Figure()
     monthly_temp_fig = go.Figure()
     added_band = False
+    all_moisture = []
+    all_temp = []
 
     for plant, feed_key in FEEDS.items():
         try:
@@ -698,16 +799,24 @@ def build_monthly_figures(session, rules_dict):
 
             if times_m:
                 monthly_moisture_fig.add_trace(go.Scatter(x=times_m, y=moisture_vals_ds, mode="lines", name=plant))
+                all_moisture.extend(moisture_vals_ds)
                 if not added_band:
                     add_ideal_band(monthly_moisture_fig, plant, rules_dict)
                     added_band = True
 
             if times_t:
                 monthly_temp_fig.add_trace(go.Scatter(x=times_t, y=temp_vals_ds, mode="lines", name=plant))
+                all_temp.extend(temp_vals_ds)
         except Exception as e:
             print(f"Failed monthly history for {plant}: {e}", flush=True)
 
-    return style_figure(monthly_moisture_fig, "Monthly Moisture Trend", "Moisture (%)"), style_figure(monthly_temp_fig, "Monthly Temperature Trend", "Temperature (°F)")
+    moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
+    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=None)
+
+    return (
+        style_figure(monthly_moisture_fig, "Monthly Moisture Trend", "Moisture (%)", moisture_range),
+        style_figure(monthly_temp_fig, "Monthly Temperature Trend", "Temperature (°F)", temp_range),
+    )
 
 
 app = Dash(__name__, suppress_callback_exceptions=True)
@@ -875,11 +984,11 @@ def update_cards(n, rules_dict):
             payload = json.loads(payload_text)
             moisture = float(payload.get("moisture_pct"))
             temp_f = float(payload.get("temp_f"))
-            raw_val = payload.get("raw")
-            raw = int(raw_val) if raw_val is not None else None
 
             ts = datetime.fromisoformat(created_at.replace("Z", "+00:00")) if created_at else None
             offline = maybe_send_offline_alert(plant, ts)
+
+            update_last_watered_if_needed(plant, moisture, ts, offline)
 
             recommendation, rec_color, bg_color = get_watering_recommendation(plant, moisture, rules_dict)
 
@@ -897,6 +1006,8 @@ def update_cards(n, rules_dict):
             }
 
             if should_log_reading(plant, moisture):
+                raw_val = payload.get("raw")
+                raw = int(raw_val) if raw_val is not None else None
                 log_to_csv(
                     timestamp=ts or datetime.now(timezone.utc),
                     plant=plant,
@@ -919,13 +1030,7 @@ def update_cards(n, rules_dict):
 
             successful_fetches += 1
 
-            if ts is not None:
-                age_minutes = (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
-                sensor_status_text = f"Reading age: {age_minutes:.0f} min"
-                last_update_text = ts.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
-            else:
-                sensor_status_text = "Reading age: unknown"
-                last_update_text = "--"
+            last_update_text = ts.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p") if ts else "--"
 
             cards.append([
                 html.Div(
@@ -955,8 +1060,8 @@ def update_cards(n, rules_dict):
                             ],
                             style={"display": "flex", "gap": "12px", "marginBottom": "12px"},
                         ),
-                        html.Div(f"Raw: {raw if raw is not None else '--'}", style={"marginBottom": "8px", "color": "#47554e"}),
-                        html.Div(sensor_status_text, style={"marginBottom": "6px", "color": "#5b6b63", "fontSize": "0.92rem"}),
+                        build_moisture_bar(moisture, rec_color),
+                        html.Div(format_last_watered(plant), style={"marginBottom": "8px", "color": "#4c5d55", "fontSize": "0.92rem", "fontWeight": "600"}),
                         html.Div(f"Last update: {last_update_text}", style={"color": "#5b6b63", "fontSize": "0.92rem"}),
                     ],
                     style={
@@ -964,7 +1069,7 @@ def update_cards(n, rules_dict):
                         "border": f"2px solid {rec_color}",
                         "borderRadius": "18px",
                         "padding": "16px",
-                        "minHeight": "220px",
+                        "minHeight": "235px",
                     },
                 )
             ])
@@ -988,8 +1093,7 @@ def update_cards(n, rules_dict):
                         html.Div("No data", style={"fontWeight": "700", "color": "#666666", "marginBottom": "10px"}),
                         html.Div("Moisture: --"),
                         html.Div("Temperature: --"),
-                        html.Div("Raw: --"),
-                        html.Div("Reading age: unknown", style={"marginTop": "10px", "color": "#666", "fontSize": "0.92rem"}),
+                        html.Div(format_last_watered(plant), style={"marginTop": "10px", "marginBottom": "8px", "color": "#4c5d55", "fontSize": "0.92rem", "fontWeight": "600"}),
                         html.Div("Last update: --", style={"color": "#666", "fontSize": "0.92rem"}),
                     ],
                     style={
@@ -997,7 +1101,7 @@ def update_cards(n, rules_dict):
                         "border": "2px solid #cccccc",
                         "borderRadius": "18px",
                         "padding": "16px",
-                        "minHeight": "220px",
+                        "minHeight": "235px",
                     },
                 )
             ])
