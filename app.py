@@ -404,9 +404,9 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
             maybe_send_offline_alert(plant, offline, ts, SENSOR_OFFLINE_MINUTES)
             update_last_watered_if_needed(plant, moisture, ts, offline)
 
-            rec, rec_color, bg_color = moisture_colors(moisture, rules_dict[plant])
+            rec, rec_color, bg_color = moisture_colors(moisture, rules_dict[plant], dark=dark)
             if offline:
-                rec, rec_color, bg_color = "Sensor offline", "#6c757d", "#f1f1f1"
+                rec, rec_color, bg_color = moisture_colors(None, rules_dict[plant], dark=dark, offline=True)
 
             latest_snapshot[plant] = {
                 "moisture": moisture,
@@ -484,7 +484,7 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
                         ],
                         style={"display": "flex", "gap": "12px", "marginBottom": "12px"},
                     ),
-                    build_moisture_bar(moisture, rec_color),
+                    build_moisture_bar(moisture, rec_color, dark=dark),
                     html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
                     html.Div(eta_text, style={"marginBottom": "8px", "fontSize": "0.92rem"}),
                     html.Div(f"Last update: {last_update}", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
@@ -510,13 +510,20 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
             card = html.Div(
                 [
                     html.H3(f"{meta['emoji']} {plant}", style={"marginTop": "0"}),
-                    html.Div("No data", style={"fontWeight": "700", "color": "#666666", "marginBottom": "10px"}),
+                    html.Div(
+                        "No data",
+                        style={
+                            "fontWeight": "700",
+                            "color": styles["subtext"],
+                            "marginBottom": "10px",
+                        },
+                    ),
                     html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
                     html.Div("Last update: --", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
                 ],
                 style={
-                    "backgroundColor": "#f5f5f5",
-                    "border": "2px solid #cccccc",
+                    "backgroundColor": styles["status_bg"]["nodata"],
+                    "border": f"2px solid {styles['status_border']['nodata']}",
                     "borderRadius": "18px",
                     "padding": "16px",
                     "minHeight": "255px",
