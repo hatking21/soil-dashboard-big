@@ -23,6 +23,13 @@ def theme_styles(dark: bool):
         button_primary_text = "#f8fbff"
         button_primary_border = "#4ea3ff"
 
+        range_button_bg = "#12233b"
+        range_button_text = "#dce9f6"
+        range_button_border = "#355b87"
+        range_button_active_bg = "#1d3557"
+        range_button_active_text = "#ffffff"
+        range_button_active_border = "#4ea3ff"
+
         status_bg = {
             "dry": "#3a1318",
             "check": "#3a2710",
@@ -40,7 +47,6 @@ def theme_styles(dark: bool):
             "nodata": "#66788f",
         }
 
-        # suggestion bubble colors
         status_pill_bg = {
             "dry": "#5a1d24",
             "check": "#5a3b12",
@@ -83,6 +89,13 @@ def theme_styles(dark: bool):
         button_primary_bg = "#ffffff"
         button_primary_text = "#1f2b24"
         button_primary_border = "#d7dee8"
+
+        range_button_bg = "#ffffff"
+        range_button_text = "#1f2b24"
+        range_button_border = "#d7dee8"
+        range_button_active_bg = "#dcefe4"
+        range_button_active_text = "#1f2b24"
+        range_button_active_border = "#93c5aa"
 
         status_bg = {
             "dry": "#fff1ef",
@@ -175,6 +188,26 @@ def theme_styles(dark: bool):
             "color": button_primary_text,
             "fontWeight": "700",
             "boxShadow": "0 6px 18px rgba(0,0,0,0.18)",
+        },
+        "range_button": {
+            "padding": "10px 14px",
+            "borderRadius": "12px",
+            "border": f"1px solid {range_button_border}",
+            "cursor": "pointer",
+            "backgroundColor": range_button_bg,
+            "color": range_button_text,
+            "fontWeight": "600",
+            "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
+        },
+        "range_button_active": {
+            "padding": "10px 14px",
+            "borderRadius": "12px",
+            "border": f"1px solid {range_button_active_border}",
+            "cursor": "pointer",
+            "backgroundColor": range_button_active_bg,
+            "color": range_button_active_text,
+            "fontWeight": "700",
+            "boxShadow": "0 6px 18px rgba(0,0,0,0.16)",
         },
         "chip": {
             "display": "inline-block",
