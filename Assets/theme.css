@@ -1,0 +1,49 @@
+.app-dark .live-range-dropdown .Select-control,
+.app-dark .live-range-dropdown .Select-menu-outer,
+.app-dark .live-range-dropdown .Select-menu,
+.app-dark .live-range-dropdown .Select-placeholder,
+.app-dark .live-range-dropdown .Select-value-label,
+.app-dark .live-range-dropdown .Select-input > input {
+  background: #162235 !important;
+  color: #eef4fb !important;
+}
+
+.app-dark .live-range-dropdown .Select-control {
+  border: 1px solid #4ea3ff !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.18) !important;
+  min-height: 42px !important;
+}
+
+.app-dark .live-range-dropdown .Select-arrow-zone,
+.app-dark .live-range-dropdown .Select-clear-zone {
+  color: #eef4fb !important;
+}
+
+.app-dark .live-range-dropdown .Select-placeholder,
+.app-dark .live-range-dropdown .Select--single > .Select-control .Select-value,
+.app-dark .live-range-dropdown .Select--single > .Select-control .Select-value .Select-value-label {
+  color: #eef4fb !important;
+  line-height: 40px !important;
+}
+
+.app-dark .live-range-dropdown .Select-menu-outer {
+  border: 1px solid #355b86 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+}
+
+.app-dark .live-range-dropdown .VirtualizedSelectOption {
+  background: #162235 !important;
+  color: #eef4fb !important;
+}
+
+.app-dark .live-range-dropdown .VirtualizedSelectFocusedOption {
+  background: #1d3557 !important;
+  color: #f8fbff !important;
+}
+
+.app-light .live-range-dropdown .Select-control {
+  border-radius: 12px !important;
+  min-height: 42px !important;
+}
