@@ -70,12 +70,14 @@ def theme_styles(_dark: bool = True):
             "fontFamily": "Arial, sans-serif",
             "background": page_bg,
             "minHeight": "100vh",
-            "padding": "24px",
+            "padding": "0",
             "color": text,
         },
         "container": {
             "maxWidth": "1280px",
             "margin": "0 auto",
+            "padding": "24px",
+            "boxSizing": "border-box",
         },
         "header": {
             "background": header_grad,
