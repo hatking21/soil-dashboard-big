@@ -1,137 +1,69 @@
-def theme_styles(dark: bool):
-    if dark:
-        page_bg = "#071224"
-        panel_bg = "rgba(10, 20, 38, 0.94)"
-        text = "#eef4fb"
-        subtext = "#a7b4c6"
-        border = "rgba(148, 163, 184, 0.18)"
+def theme_styles(_dark: bool = True):
+    page_bg = "#071224"
+    panel_bg = "rgba(10, 20, 38, 0.94)"
+    text = "#eef4fb"
+    subtext = "#a7b4c6"
+    border = "rgba(148, 163, 184, 0.18)"
 
-        card_shell_bg = "#0b1628"
-        chip_bg = "#162235"
-        plot_bg = "#0b1628"
-        input_bg = "#0f1c31"
-        input_text = "#eef4fb"
+    card_shell_bg = "#0b1628"
+    chip_bg = "#162235"
+    plot_bg = "#0b1628"
+    input_bg = "#0f1c31"
+    input_text = "#eef4fb"
 
-        header_grad = "linear-gradient(135deg, #16645a 0%, #235c8a 100%)"
+    header_grad = "linear-gradient(135deg, #16645a 0%, #235c8a 100%)"
 
-        tab_bg = "#12233b"
-        tab_selected = "#27486d"
+    tab_bg = "#12233b"
+    tab_selected = "#27486d"
 
-        button_bg = "#162235"
-        button_text = "#eef4fb"
-        button_primary_bg = "#1d3557"
-        button_primary_text = "#f8fbff"
-        button_primary_border = "#4ea3ff"
+    button_bg = "#162235"
+    button_text = "#eef4fb"
+    button_primary_bg = "#1d3557"
+    button_primary_text = "#f8fbff"
+    button_primary_border = "#4ea3ff"
 
-        range_button_bg = "#12233b"
-        range_button_text = "#dce9f6"
-        range_button_border = "#355b87"
-        range_button_active_bg = "#1d3557"
-        range_button_active_text = "#ffffff"
-        range_button_active_border = "#4ea3ff"
+    range_button_bg = "#12233b"
+    range_button_text = "#dce9f6"
+    range_button_border = "#355b87"
+    range_button_active_bg = "#1d3557"
+    range_button_active_text = "#ffffff"
+    range_button_active_border = "#4ea3ff"
 
-        status_bg = {
-            "dry": "#3a1318",
-            "check": "#3a2710",
-            "good": "#113222",
-            "wet": "#112d3b",
-            "offline": "#1d2633",
-            "nodata": "#182231",
-        }
-        status_border = {
-            "dry": "#ff6b6b",
-            "check": "#ffb347",
-            "good": "#33d17a",
-            "wet": "#4db8ff",
-            "offline": "#93a4b8",
-            "nodata": "#66788f",
-        }
+    status_bg = {
+        "dry": "#3a1318",
+        "check": "#3a2710",
+        "good": "#113222",
+        "wet": "#112d3b",
+        "offline": "#1d2633",
+        "nodata": "#182231",
+    }
+    status_border = {
+        "dry": "#ff6b6b",
+        "check": "#ffb347",
+        "good": "#33d17a",
+        "wet": "#4db8ff",
+        "offline": "#93a4b8",
+        "nodata": "#66788f",
+    }
 
-        status_pill_bg = {
-            "dry": "#5a1d24",
-            "check": "#5a3b12",
-            "good": "#17492f",
-            "wet": "#163f55",
-            "offline": "#2a3442",
-            "nodata": "#243041",
-        }
-        status_pill_text = {
-            "dry": "#ff9a9a",
-            "check": "#ffd089",
-            "good": "#7ff0b2",
-            "wet": "#8fd8ff",
-            "offline": "#c2ccd8",
-            "nodata": "#c2ccd8",
-        }
+    status_pill_bg = {
+        "dry": "#5a1d24",
+        "check": "#5a3b12",
+        "good": "#17492f",
+        "wet": "#163f55",
+        "offline": "#2a3442",
+        "nodata": "#243041",
+    }
+    status_pill_text = {
+        "dry": "#ff9a9a",
+        "check": "#ffd089",
+        "good": "#7ff0b2",
+        "wet": "#8fd8ff",
+        "offline": "#c2ccd8",
+        "nodata": "#c2ccd8",
+    }
 
-        bar_track = "#24354d"
-
-    else:
-        page_bg = "linear-gradient(180deg, #f5fbf7 0%, #eef4f8 100%)"
-        panel_bg = "rgba(255,255,255,0.88)"
-        text = "#1f2b24"
-        subtext = "#5b6b63"
-        border = "rgba(0,0,0,0.06)"
-
-        card_shell_bg = "#ffffff"
-        chip_bg = "#ffffff"
-        plot_bg = "#ffffff"
-        input_bg = "#ffffff"
-        input_text = "#1f2b24"
-
-        header_grad = "linear-gradient(135deg, #2e7d5a 0%, #4e9c78 100%)"
-
-        tab_bg = "#f7faf8"
-        tab_selected = "#dcefe4"
-
-        button_bg = "#ffffff"
-        button_text = "#1f2b24"
-        button_primary_bg = "#ffffff"
-        button_primary_text = "#1f2b24"
-        button_primary_border = "#d7dee8"
-
-        range_button_bg = "#ffffff"
-        range_button_text = "#1f2b24"
-        range_button_border = "#d7dee8"
-        range_button_active_bg = "#dcefe4"
-        range_button_active_text = "#1f2b24"
-        range_button_active_border = "#93c5aa"
-
-        status_bg = {
-            "dry": "#fff1ef",
-            "check": "#fff7eb",
-            "good": "#f2fff7",
-            "wet": "#eef9ff",
-            "offline": "#f1f5f9",
-            "nodata": "#f5f5f5",
-        }
-        status_border = {
-            "dry": "#c0392b",
-            "check": "#d9822b",
-            "good": "#2e8b57",
-            "wet": "#2f7ea1",
-            "offline": "#6b7280",
-            "nodata": "#cccccc",
-        }
-
-        status_pill_bg = {
-            "dry": "#ffe0dc",
-            "check": "#ffe8c7",
-            "good": "#dff7e8",
-            "wet": "#dff1fb",
-            "offline": "#e9edf3",
-            "nodata": "#eceff3",
-        }
-        status_pill_text = {
-            "dry": "#c0392b",
-            "check": "#b56a16",
-            "good": "#248a52",
-            "wet": "#256f99",
-            "offline": "#5f6c7b",
-            "nodata": "#5f6c7b",
-        }
-
-        bar_track = "#e9efeb"
+    bar_track = "#24354d"
 
     return {
         "page": {
@@ -190,24 +122,24 @@ def theme_styles(dark: bool):
             "boxShadow": "0 6px 18px rgba(0,0,0,0.18)",
         },
         "range_button": {
-            "padding": "10px 14px",
+            "padding": "10px 16px",
             "borderRadius": "12px",
             "border": f"1px solid {range_button_border}",
             "cursor": "pointer",
             "backgroundColor": range_button_bg,
             "color": range_button_text,
-            "fontWeight": "600",
+            "fontWeight": "700",
             "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
         },
         "range_button_active": {
-            "padding": "10px 14px",
+            "padding": "10px 16px",
             "borderRadius": "12px",
             "border": f"1px solid {range_button_active_border}",
             "cursor": "pointer",
             "backgroundColor": range_button_active_bg,
             "color": range_button_active_text,
             "fontWeight": "700",
-            "boxShadow": "0 6px 18px rgba(0,0,0,0.16)",
+            "boxShadow": "0 6px 18px rgba(0,0,0,0.18)",
         },
         "chip": {
             "display": "inline-block",
