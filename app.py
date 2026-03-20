@@ -51,6 +51,7 @@ from ui import (
     build_settings_panel,
     make_card_shell,
     moisture_colors,
+    recommendation_pill,
 )
 
 app = Dash(__name__, suppress_callback_exceptions=True)
@@ -200,6 +201,7 @@ def render_shell(theme_data):
     styles = theme_styles(dark)
 
     return html.Div(
+        className="app-dark" if dark else "app-light",
         style=styles["page"],
         children=[
             html.Div(
@@ -220,10 +222,10 @@ def render_shell(theme_data):
                                         ]
                                     ),
                                     html.Button(
-                                        "Toggle Dark Mode",
+                                        "Light Mode" if dark else "Dark Mode",
                                         id="toggle-dark-button",
                                         n_clicks=0,
-                                        style={**styles["button"], "backgroundColor": "rgba(255,255,255,0.9)"},
+                                        style=styles["button_primary"],
                                     ),
                                 ],
                                 style={"display": "flex", "justifyContent": "space-between", "alignItems": "flex-start", "gap": "16px"},
@@ -253,7 +255,9 @@ def render_shell(theme_data):
                         ],
                     ),
                     html.Div(
-                        [
+                        id="live-range-container",
+                        style={"marginTop": "16px"},
+                        children=[
                             html.Label("Live range", style={"marginRight": "10px"}),
                             dcc.Dropdown(
                                 id="live-range",
@@ -264,7 +268,8 @@ def render_shell(theme_data):
                                 ],
                                 value=1,
                                 clearable=False,
-                                style={"width": "220px", "display": "inline-block", "marginTop": "16px"},
+                                className="live-range-dropdown",
+                                style={"width": "220px", "display": "inline-block", "verticalAlign": "middle"},
                             ),
                         ]
                     ),
@@ -450,18 +455,7 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
                     html.Div(
                         [
                             html.H3(title, style={"margin": "0", "fontSize": "1.1rem"}),
-                            html.Div(
-                                rec,
-                                style={
-                                    "padding": "6px 10px",
-                                    "borderRadius": "999px",
-                                    "backgroundColor": "rgba(255,255,255,0.7)",
-                                    "border": f"1px solid {rec_color}",
-                                    "color": rec_color,
-                                    "fontWeight": "700",
-                                    "fontSize": "0.85rem",
-                                },
-                            ),
+                            recommendation_pill(rec, moisture, rules_dict[plant], dark=dark, offline=offline),
                         ],
                         style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "14px"},
                     ),
@@ -615,6 +609,16 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
         )
 
     return cards + [system_status, health_panel, alert_banner]
+
+
+@app.callback(
+    Output("live-range-container", "style"),
+    Input("view-tabs", "value"),
+)
+def toggle_live_range_visibility(tab):
+    if tab == "live":
+        return {"marginTop": "16px", "display": "block"}
+    return {"display": "none"}
 
 
 @app.callback(
