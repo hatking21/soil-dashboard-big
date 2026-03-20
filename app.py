@@ -68,8 +68,44 @@ plant_names = list(FEEDS.keys())
 init_notification_state(plant_names)
 
 
-def downsample_history_dict(histories, step=1):
-    if step <= 1:
+def min_max_bucket_downsample(times, moisture, temp, target_points=300):
+    n = len(times)
+    if n <= target_points or n == 0:
+        return times, moisture, temp
+
+    bucket_count = max(1, target_points // 2)
+    bucket_size = max(1, n // bucket_count)
+
+    keep_indices = set()
+
+    for start in range(0, n, bucket_size):
+        end = min(n, start + bucket_size)
+        if start >= end:
+            continue
+
+        bucket_m = moisture[start:end]
+        if not bucket_m:
+            continue
+
+        local_min_idx = start + bucket_m.index(min(bucket_m))
+        local_max_idx = start + bucket_m.index(max(bucket_m))
+
+        keep_indices.add(local_min_idx)
+        keep_indices.add(local_max_idx)
+
+    keep_indices.add(0)
+    keep_indices.add(n - 1)
+
+    selected = sorted(keep_indices)
+    return (
+        [times[i] for i in selected],
+        [moisture[i] for i in selected],
+        [temp[i] for i in selected],
+    )
+
+
+def downsample_history_dict(histories, target_points=None):
+    if target_points is None:
         return histories
 
     out = {}
@@ -78,16 +114,20 @@ def downsample_history_dict(histories, step=1):
         moisture = row.get("moisture", [])
         temp = row.get("temp", [])
 
+        ds_times, ds_moisture, ds_temp = min_max_bucket_downsample(
+            times, moisture, temp, target_points=target_points
+        )
+
         out[plant] = {
-            "times": times[::step],
-            "moisture": moisture[::step],
-            "temp": temp[::step],
+            "times": ds_times,
+            "moisture": ds_moisture,
+            "temp": ds_temp,
         }
     return out
 
 
-def serialize_histories(histories, step=1):
-    histories = downsample_history_dict(histories, step=step)
+def serialize_histories(histories, target_points=None):
+    histories = downsample_history_dict(histories, target_points=target_points)
     out = {}
 
     for plant, row in histories.items():
@@ -253,11 +293,11 @@ def refresh_history(n):
     h30, _ = fetch_history(hours=24 * 30)
 
     return (
-        serialize_histories(h1, step=1),
-        serialize_histories(h6, step=1),
-        serialize_histories(h24, step=1),
-        serialize_histories(h7, step=2),
-        serialize_histories(h30, step=8),
+        serialize_histories(h1, target_points=None),
+        serialize_histories(h6, target_points=None),
+        serialize_histories(h24, target_points=None),
+        serialize_histories(h7, target_points=500),
+        serialize_histories(h30, target_points=350),
     )
 
 
