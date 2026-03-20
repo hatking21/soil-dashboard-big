@@ -266,7 +266,7 @@ app.layout = html.Div(
         dcc.Interval(id="history-fast-refresh", interval=HISTORY_FAST_REFRESH_MS, n_intervals=0),
         dcc.Interval(id="history-7-refresh", interval=HISTORY_7_REFRESH_MS, n_intervals=0),
         dcc.Interval(id="history-30-refresh", interval=HISTORY_30_REFRESH_MS, n_intervals=0),
-        html.Div(id="app-shell", children=build_shell(False, 1)),
+        html.Div(id="app-shell"),
     ],
 )
 
