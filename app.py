@@ -67,6 +67,53 @@ def download_csv():
 plant_names = list(FEEDS.keys())
 init_notification_state(plant_names)
 
+
+def downsample_history_dict(histories, step=1):
+    if step <= 1:
+        return histories
+
+    out = {}
+    for plant, row in (histories or {}).items():
+        times = row.get("times", [])
+        moisture = row.get("moisture", [])
+        temp = row.get("temp", [])
+
+        out[plant] = {
+            "times": times[::step],
+            "moisture": moisture[::step],
+            "temp": temp[::step],
+        }
+    return out
+
+
+def serialize_histories(histories, step=1):
+    histories = downsample_history_dict(histories, step=step)
+    out = {}
+
+    for plant, row in histories.items():
+        out[plant] = {
+            "times": [t.isoformat() for t in row.get("times", [])],
+            "moisture": row.get("moisture", []),
+            "temp": row.get("temp", []),
+        }
+
+    return out
+
+
+def deserialize_histories(hist):
+    out = {}
+    hist = hist or {}
+
+    for plant, row in hist.items():
+        out[plant] = {
+            "times": [datetime.fromisoformat(t) for t in row.get("times", [])],
+            "moisture": row.get("moisture", []),
+            "temp": row.get("temp", []),
+        }
+
+    return out
+
+
 app.layout = html.Div(
     id="page-root",
     children=[
@@ -199,16 +246,6 @@ def refresh_snapshot(n):
     Input("history-refresh", "n_intervals"),
 )
 def refresh_history(n):
-    def serialize(histories):
-        out = {}
-        for plant, row in histories.items():
-            out[plant] = {
-                "times": [t.isoformat() for t in row.get("times", [])],
-                "moisture": row.get("moisture", []),
-                "temp": row.get("temp", []),
-            }
-        return out
-
     h1, _ = fetch_history(hours=1)
     h6, _ = fetch_history(hours=6)
     h24, _ = fetch_history(hours=24)
@@ -216,11 +253,11 @@ def refresh_history(n):
     h30, _ = fetch_history(hours=24 * 30)
 
     return (
-        serialize(h1),
-        serialize(h6),
-        serialize(h24),
-        serialize(h7),
-        serialize(h30),
+        serialize_histories(h1, step=1),
+        serialize_histories(h6, step=1),
+        serialize_histories(h24, step=1),
+        serialize_histories(h7, step=2),
+        serialize_histories(h30, step=8),
     )
 
 
@@ -531,26 +568,16 @@ def render_tab(tab, live_range, h1, h6, h24, h7, h30, rules_dict, theme_data):
     dark = bool((theme_data or {}).get("dark", False))
     styles = theme_styles(dark)
 
-    def deserialize(hist):
-        out = {}
-        hist = hist or {}
-        for plant, row in hist.items():
-            out[plant] = {
-                "times": [datetime.fromisoformat(t) for t in row.get("times", [])],
-                "moisture": row.get("moisture", []),
-                "temp": row.get("temp", []),
-            }
-        return out
-
     if tab == "settings":
         return build_settings_panel(rules_dict, dark=dark)
 
     if tab == "live":
         live_hist = {
-            1: deserialize(h1),
-            6: deserialize(h6),
-            24: deserialize(h24),
-        }.get(live_range, deserialize(h1))
+            1: deserialize_histories(h1),
+            6: deserialize_histories(h6),
+            24: deserialize_histories(h24),
+        }.get(live_range, deserialize_histories(h1))
+
         moisture_fig, temp_fig = build_figures(
             live_hist,
             rules_dict,
@@ -566,7 +593,7 @@ def render_tab(tab, live_range, h1, h6, h24, h7, h30, rules_dict, theme_data):
         )
 
     if tab == "weekly":
-        weekly_hist = deserialize(h7)
+        weekly_hist = deserialize_histories(h7)
         moisture_fig, temp_fig = build_figures(
             weekly_hist,
             rules_dict,
@@ -581,7 +608,7 @@ def render_tab(tab, live_range, h1, h6, h24, h7, h30, rules_dict, theme_data):
             ]
         )
 
-    monthly_hist = deserialize(h30)
+    monthly_hist = deserialize_histories(h30)
     moisture_fig, temp_fig = build_figures(
         monthly_hist,
         rules_dict,
