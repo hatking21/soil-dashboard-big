@@ -7,9 +7,11 @@ import requests
 
 from config import (
     AIO_USERNAME,
+    CACHE_DIR,
     CSV_LOG_INTERVAL,
     CSV_LOG_PATH,
     CSV_RETENTION_DAYS,
+    ERROR_LOG_PATH,
     FEEDS,
     HEADERS,
     LOCAL_TZ,
@@ -32,13 +34,13 @@ last_seen_moisture = {plant: None for plant in FEEDS}
 last_seen_timestamp = {plant: None for plant in FEEDS}
 last_watered_time = {plant: None for plant in FEEDS}
 
-last_good_snapshot = {}
-last_good_histories = {}
 health_state = {
     "adafruit_ok": False,
     "csv_ok": False,
     "watering_log_ok": False,
     "last_error": "",
+    "last_successful_fetch": "Never",
+    "startup_checks": [],
 }
 
 
@@ -46,6 +48,47 @@ def make_session():
     s = requests.Session()
     s.headers.update(HEADERS)
     return s
+
+
+def ensure_parent_dir(path):
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
+
+def ensure_cache_dir():
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+def log_error(where, exc):
+    ensure_parent_dir(ERROR_LOG_PATH)
+    exists = os.path.exists(ERROR_LOG_PATH)
+    with open(ERROR_LOG_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not exists:
+            writer.writerow(["timestamp_utc", "where", "error"])
+        writer.writerow([datetime.now(timezone.utc).isoformat(), where, str(exc)])
+
+
+def cache_path(name):
+    ensure_cache_dir()
+    return os.path.join(CACHE_DIR, f"{name}.json")
+
+
+def save_cache(name, payload):
+    try:
+        with open(cache_path(name), "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except Exception as e:
+        log_error("save_cache", e)
+
+
+def load_cache(name, default=None):
+    try:
+        with open(cache_path(name), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
 
 
 def _request_json(session, url, params=None, timeout=15):
@@ -58,12 +101,6 @@ def _request_json(session, url, params=None, timeout=15):
         except Exception as e:
             last_exc = e
     raise last_exc
-
-
-def ensure_parent_dir(path):
-    folder = os.path.dirname(path)
-    if folder:
-        os.makedirs(folder, exist_ok=True)
 
 
 def ensure_csv_exists():
@@ -146,6 +183,7 @@ def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_o
         last_csv_status = f"Last write failed: {e}"
         health_state["csv_ok"] = False
         health_state["last_error"] = str(e)
+        log_error("log_to_csv", e)
 
 
 def log_watering_event(timestamp, plant, moisture_before, moisture_after):
@@ -158,6 +196,7 @@ def log_watering_event(timestamp, plant, moisture_before, moisture_after):
     except Exception as e:
         health_state["watering_log_ok"] = False
         health_state["last_error"] = str(e)
+        log_error("log_watering_event", e)
 
 
 def load_last_watered_from_csv():
@@ -180,6 +219,7 @@ def load_last_watered_from_csv():
     except Exception as e:
         health_state["watering_log_ok"] = False
         health_state["last_error"] = str(e)
+        log_error("load_last_watered_from_csv", e)
 
 
 def get_csv_row_count():
@@ -256,7 +296,6 @@ def update_last_watered_if_needed(plant, moisture, ts, offline):
 
 
 def fetch_latest_snapshot():
-    global last_good_snapshot
     session = make_session()
     snapshot = {}
 
@@ -282,20 +321,21 @@ def fetch_latest_snapshot():
                 "moisture": moisture,
                 "temp_f": temp_f,
                 "raw": raw,
-                "timestamp": ts,
+                "timestamp": ts.isoformat() if ts else None,
             }
 
         health_state["adafruit_ok"] = True
-        last_good_snapshot = snapshot
+        health_state["last_successful_fetch"] = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
+        save_cache("snapshot", snapshot)
         return snapshot, False
     except Exception as e:
         health_state["adafruit_ok"] = False
         health_state["last_error"] = str(e)
-        return last_good_snapshot.copy(), True
+        log_error("fetch_latest_snapshot", e)
+        return load_cache("snapshot", {}), True
 
 
-def fetch_history(hours=24):
-    global last_good_histories
+def fetch_history(hours=24, cache_name="history"):
     session = make_session()
     histories = {}
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -328,7 +368,7 @@ def fetch_history(hours=24):
                 except Exception:
                     continue
                 if ts >= cutoff:
-                    times.append(ts)
+                    times.append(ts.isoformat())
                     moisture_vals.append(moisture)
                     temp_vals.append(temp_f)
 
@@ -338,10 +378,11 @@ def fetch_history(hours=24):
                 "temp": temp_vals,
             }
 
-        last_good_histories[hours] = histories
+        save_cache(cache_name, histories)
         return histories, False
-    except Exception:
-        return last_good_histories.get(hours, {}).copy(), True
+    except Exception as e:
+        log_error(f"fetch_history_{hours}", e)
+        return load_cache(cache_name, {}), True
 
 
 def compute_trend_arrow(values):
@@ -362,12 +403,8 @@ def estimate_hours_until_dry(times, moisture_values, dry_threshold):
     recent_times = times[-6:]
     recent_vals = moisture_values[-6:]
 
-    time_hours = []
     start = recent_times[0]
-    for t in recent_times:
-        time_hours.append((t - start).total_seconds() / 3600.0)
-
-    x = time_hours
+    x = [(t - start).total_seconds() / 3600.0 for t in recent_times]
     y = recent_vals
 
     n = len(x)
@@ -387,6 +424,14 @@ def estimate_hours_until_dry(times, moisture_values, dry_threshold):
         return 0.0
 
     hours = (dry_threshold - current) / slope
-    if hours < 0:
-        return None
-    return hours
+    return None if hours < 0 else hours
+
+
+def run_startup_checks():
+    checks = []
+    checks.append(("AIO_USERNAME", bool(AIO_USERNAME := os.getenv("AIO_USERNAME"))))
+    checks.append(("AIO_KEY", bool(AIO_KEY := os.getenv("AIO_KEY"))))
+    checks.append(("CSV path writable", True))
+    checks.append(("Watering log writable", True))
+    checks.append(("ntfy configured", bool(os.getenv("NTFY_TOPIC"))))
+    health_state["startup_checks"] = checks
