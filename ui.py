@@ -11,6 +11,9 @@ from data_layer import get_csv_last_write_time, get_csv_row_count, last_csv_stat
 from styles import theme_styles
 
 
+DARK = True
+
+
 def moisture_status_key(moisture, rules, offline=False):
     if offline:
         return "offline"
@@ -25,8 +28,8 @@ def moisture_status_key(moisture, rules, offline=False):
     return "wet"
 
 
-def moisture_colors(moisture, rules, dark=False, offline=False):
-    styles = theme_styles(dark)
+def moisture_colors(moisture, rules, dark=True, offline=False):
+    styles = theme_styles(True)
     key = moisture_status_key(moisture, rules, offline=offline)
 
     label_map = {
@@ -45,8 +48,8 @@ def moisture_colors(moisture, rules, dark=False, offline=False):
     )
 
 
-def recommendation_pill(label, moisture, rules, dark=False, offline=False):
-    styles = theme_styles(dark)
+def recommendation_pill(label, moisture, rules, dark=True, offline=False):
+    styles = theme_styles(True)
     key = moisture_status_key(moisture, rules, offline=offline)
 
     return html.Div(
@@ -66,13 +69,13 @@ def recommendation_pill(label, moisture, rules, dark=False, offline=False):
     )
 
 
-def make_card_shell(plant, dark=False):
-    styles = theme_styles(dark)
+def make_card_shell(plant, dark=True):
+    styles = theme_styles(True)
     return html.Div(id=f"card-{plant}", style=styles["card_shell"])
 
 
-def build_moisture_bar(moisture, color, dark=False):
-    styles = theme_styles(dark)
+def build_moisture_bar(moisture, color, dark=True):
+    styles = theme_styles(True)
     safe = max(0, min(100, moisture))
 
     return html.Div(
@@ -101,8 +104,8 @@ def build_moisture_bar(moisture, color, dark=False):
     )
 
 
-def build_health_panel(health_state, used_fallback, dark=False, show_details=False):
-    styles = theme_styles(dark)
+def build_health_panel(health_state, used_fallback, dark=True, show_details=False):
+    styles = theme_styles(True)
 
     def pill(label, ok):
         return html.Span(
@@ -154,8 +157,8 @@ def build_health_panel(health_state, used_fallback, dark=False, show_details=Fal
     return html.Div(items, style={**styles["section"], "marginBottom": "16px"})
 
 
-def build_settings_panel(rules_dict, dark=False, health_state_data=None, used_fallback=False):
-    styles = theme_styles(dark)
+def build_settings_panel(rules_dict, dark=True, health_state_data=None, used_fallback=False):
+    styles = theme_styles(True)
 
     input_style = {
         "width": "100%",
@@ -185,7 +188,7 @@ def build_settings_panel(rules_dict, dark=False, health_state_data=None, used_fa
         html.Div(
             [
                 html.H4("Startup / service status", style={"marginTop": "6px", "marginBottom": "10px"}),
-                build_health_panel(health_state_data, used_fallback, dark=dark, show_details=True),
+                build_health_panel(health_state_data, used_fallback, dark=True, show_details=True),
             ],
             style={"marginBottom": "14px"},
         ),
