@@ -1,15 +1,13 @@
 from dash import dcc, html
 
 from config import (
-    CARD_REFRESH_MS,
     CSV_RETENTION_DAYS,
     FEEDS,
-    HISTORY_REFRESH_MS,
     SENSOR_OFFLINE_MINUTES,
     TEMP_F_MAX,
     WATERING_JUMP_THRESHOLD,
 )
-from data_layer import get_csv_last_write_time, get_csv_row_count, last_csv_status
+from data_layer import get_csv_last_write_time, get_csv_row_count, health_state, last_csv_status
 from styles import theme_styles
 
 
@@ -62,7 +60,17 @@ def build_health_panel(health_state, used_fallback, dark=False):
         pill("Adafruit", health_state["adafruit_ok"]),
         pill("CSV", health_state["csv_ok"]),
         pill("Water log", health_state["watering_log_ok"]),
+        html.Span(f"Last successful fetch: {health_state.get('last_successful_fetch', 'Never')}", style=styles["chip"]),
     ]
+
+    for label, ok in health_state.get("startup_checks", []):
+        items.append(
+            html.Span(
+                f"{label}: {'OK' if ok else 'Missing'}",
+                style={**styles["chip"], "color": "#2e8b57" if ok else "#c0392b"},
+            )
+        )
+
     if used_fallback:
         items.append(html.Span("Using last good data", style={**styles["chip"], "color": "#d9822b"}))
 
@@ -84,8 +92,6 @@ def build_settings_panel(rules_dict, dark=False):
                 html.Span(f"CSV retention: {CSV_RETENTION_DAYS} days", style=styles["chip"]),
                 html.Span(f"CSV rows: {get_csv_row_count()}", style=styles["chip"]),
                 html.Span(f"Temp cap: {TEMP_F_MAX:.0f}°F", style=styles["chip"]),
-                html.Span(f"Card refresh: {CARD_REFRESH_MS // 1000}s", style=styles["chip"]),
-                html.Span(f"Chart refresh: {HISTORY_REFRESH_MS // 1000}s", style=styles["chip"]),
             ]
         ),
         html.P(f"CSV last write: {get_csv_last_write_time()}", style={"color": styles["subtext"]}),
@@ -184,12 +190,6 @@ def build_settings_panel(rules_dict, dark=False):
                     href="/download-csv",
                     target="_blank",
                     style={**styles["button"], "display": "inline-block", "textDecoration": "none"},
-                ),
-                html.Button(
-                    "Toggle Dark Mode",
-                    id="toggle-dark-button",
-                    n_clicks=0,
-                    style={**styles["button"], "marginLeft": "12px"},
                 ),
             ]
         )
