@@ -251,6 +251,7 @@ def build_shell(dark=False, live_range=1):
 
 app.layout = html.Div(
     id="page-root",
+    className="app-light",
     children=[
         dcc.Store(id="plant-rules-store", storage_type="local", data=DEFAULT_PLANT_RULES),
         dcc.Store(id="theme-store", storage_type="local", data={"dark": False}),
@@ -284,13 +285,14 @@ def toggle_theme(n_clicks, theme_data):
 
 @app.callback(
     Output("app-shell", "children"),
+    Output("page-root", "className"),
     Input("theme-store", "data"),
     Input("live-range-store", "data"),
 )
 def render_shell(theme_data, live_range):
     dark = bool((theme_data or {}).get("dark", False))
     live_range = live_range or 1
-    return build_shell(dark, live_range)
+    return build_shell(dark, live_range), ("app-dark" if dark else "app-light")
 
 
 
