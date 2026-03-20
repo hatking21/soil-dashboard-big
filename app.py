@@ -254,7 +254,7 @@ app.layout = html.Div(
     className="app-light",
     children=[
         dcc.Store(id="plant-rules-store", storage_type="local", data=DEFAULT_PLANT_RULES),
-        dcc.Store(id="theme-store", storage_type="local", data={"dark": False}),
+        dcc.Store(id="theme-store", storage_type="session", data=False),
         dcc.Store(id="live-range-store", storage_type="memory", data=1),
         dcc.Store(id="snapshot-store"),
         dcc.Store(id="history-1-store"),
@@ -278,9 +278,8 @@ app.layout = html.Div(
     State("theme-store", "data"),
     prevent_initial_call=True,
 )
-def toggle_theme(n_clicks, theme_data):
-    dark = bool((theme_data or {}).get("dark", False))
-    return {"dark": not dark}
+def toggle_theme(n_clicks, theme_is_dark):
+    return not bool(theme_is_dark)
 
 
 @app.callback(
@@ -289,8 +288,8 @@ def toggle_theme(n_clicks, theme_data):
     Input("theme-store", "data"),
     Input("live-range-store", "data"),
 )
-def render_shell(theme_data, live_range):
-    dark = bool((theme_data or {}).get("dark", False))
+def render_shell(theme_is_dark, live_range):
+    dark = bool(theme_is_dark)
     live_range = live_range or 1
     return build_shell(dark, live_range), ("app-dark" if dark else "app-light")
 
@@ -395,8 +394,8 @@ def send_test_notification(n_clicks):
     Input("plant-rules-store", "data"),
     Input("theme-store", "data"),
 )
-def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
-    dark = bool((theme_data or {}).get("dark", False))
+def update_cards(snapshot_data, history24_data, rules_dict, theme_is_dark):
+    dark = bool(theme_is_dark)
     styles = theme_styles(dark)
 
     snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
@@ -702,8 +701,8 @@ def toggle_live_range_visibility(tab):
     Input("plant-rules-store", "data"),
     Input("theme-store", "data"),
 )
-def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict, theme_data):
-    dark = bool((theme_data or {}).get("dark", False))
+def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict, theme_is_dark):
+    dark = bool(theme_is_dark)
     styles = theme_styles(dark)
 
     if tab == "settings":
