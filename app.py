@@ -161,8 +161,9 @@ def deserialize_histories(hist):
     return out
 
 
-def build_shell(dark=False, live_range=1):
-    styles = theme_styles(dark)
+def build_shell(live_range=1):
+    dark = True
+    styles = theme_styles(True)
 
     def range_button(label, value):
         selected = live_range == value
@@ -174,7 +175,7 @@ def build_shell(dark=False, live_range=1):
         )
 
     return html.Div(
-        className="app-dark" if dark else "app-light",
+        className="app-dark",
         style=styles["page"],
         children=[
             html.Div(
@@ -193,12 +194,6 @@ def build_shell(dark=False, live_range=1):
                                                 style={"margin": "0", "opacity": "0.92"},
                                             ),
                                         ]
-                                    ),
-                                    html.Button(
-                                        "Light Mode" if dark else "Dark Mode",
-                                        id="toggle-dark-button",
-                                        n_clicks=0,
-                                        style=styles["button_primary"],
                                     ),
                                 ],
                                 style={"display": "flex", "justifyContent": "space-between", "alignItems": "flex-start", "gap": "16px"},
@@ -251,10 +246,9 @@ def build_shell(dark=False, live_range=1):
 
 app.layout = html.Div(
     id="page-root",
-    className="app-light",
+    className="app-dark",
     children=[
         dcc.Store(id="plant-rules-store", storage_type="local", data=DEFAULT_PLANT_RULES),
-        dcc.Store(id="theme-store", storage_type="session", data=False),
         dcc.Store(id="live-range-store", storage_type="memory", data=1),
         dcc.Store(id="snapshot-store"),
         dcc.Store(id="history-1-store"),
@@ -266,33 +260,19 @@ app.layout = html.Div(
         dcc.Interval(id="history-fast-refresh", interval=HISTORY_FAST_REFRESH_MS, n_intervals=0),
         dcc.Interval(id="history-7-refresh", interval=HISTORY_7_REFRESH_MS, n_intervals=0),
         dcc.Interval(id="history-30-refresh", interval=HISTORY_30_REFRESH_MS, n_intervals=0),
-        html.Div(id="app-shell"),
+        html.Div(id="app-shell", children=build_shell(1)),
     ],
 )
 
 
 
 @app.callback(
-    Output("theme-store", "data"),
-    Input("toggle-dark-button", "n_clicks"),
-    State("theme-store", "data"),
-    prevent_initial_call=True,
-)
-def toggle_theme(n_clicks, theme_is_dark):
-    return not bool(theme_is_dark)
-
-
-@app.callback(
     Output("app-shell", "children"),
-    Output("page-root", "className"),
-    Input("theme-store", "data"),
     Input("live-range-store", "data"),
 )
-def render_shell(theme_is_dark, live_range):
-    dark = bool(theme_is_dark)
+def render_shell(live_range):
     live_range = live_range or 1
-    return build_shell(dark, live_range), ("app-dark" if dark else "app-light")
-
+    return build_shell(live_range)
 
 
 @app.callback(
@@ -392,11 +372,10 @@ def send_test_notification(n_clicks):
     Input("snapshot-store", "data"),
     Input("history-24-store", "data"),
     Input("plant-rules-store", "data"),
-    Input("theme-store", "data"),
 )
-def update_cards(snapshot_data, history24_data, rules_dict, theme_is_dark):
-    dark = bool(theme_is_dark)
-    styles = theme_styles(dark)
+def update_cards(snapshot_data, history24_data, rules_dict):
+    dark = True
+    styles = theme_styles(True)
 
     snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
     snapshot = snapshot_data.get("snapshot", {})
@@ -699,11 +678,10 @@ def toggle_live_range_visibility(tab):
     Input("history-30-store", "data"),
     Input("snapshot-store", "data"),
     Input("plant-rules-store", "data"),
-    Input("theme-store", "data"),
 )
-def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict, theme_is_dark):
-    dark = bool(theme_is_dark)
-    styles = theme_styles(dark)
+def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict):
+    dark = True
+    styles = theme_styles(True)
 
     if tab == "settings":
         snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
