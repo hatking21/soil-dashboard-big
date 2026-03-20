@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from dash import Dash, Input, Output, State, ALL, dcc, html, no_update
+from dash import Dash, Input, Output, State, ALL, dcc, html, no_update, ctx
 from flask import send_file
 
 from charts import build_figures
@@ -161,44 +161,17 @@ def deserialize_histories(hist):
     return out
 
 
-app.layout = html.Div(
-    id="page-root",
-    children=[
-        dcc.Store(id="plant-rules-store", storage_type="local", data=DEFAULT_PLANT_RULES),
-        dcc.Store(id="theme-store", storage_type="local", data={"dark": False}),
-        dcc.Store(id="snapshot-store"),
-        dcc.Store(id="history-1-store"),
-        dcc.Store(id="history-6-store"),
-        dcc.Store(id="history-24-store"),
-        dcc.Store(id="history-7-store"),
-        dcc.Store(id="history-30-store"),
-        dcc.Interval(id="card-refresh", interval=CARD_REFRESH_MS, n_intervals=0),
-        dcc.Interval(id="history-fast-refresh", interval=HISTORY_FAST_REFRESH_MS, n_intervals=0),
-        dcc.Interval(id="history-7-refresh", interval=HISTORY_7_REFRESH_MS, n_intervals=0),
-        dcc.Interval(id="history-30-refresh", interval=HISTORY_30_REFRESH_MS, n_intervals=0),
-        html.Div(id="app-shell"),
-    ],
-)
-
-
-@app.callback(
-    Output("theme-store", "data"),
-    Input("toggle-dark-button", "n_clicks"),
-    State("theme-store", "data"),
-    prevent_initial_call=True,
-)
-def toggle_theme(n_clicks, theme_data):
-    dark = bool((theme_data or {}).get("dark", False))
-    return {"dark": not dark}
-
-
-@app.callback(
-    Output("app-shell", "children"),
-    Input("theme-store", "data"),
-)
-def render_shell(theme_data):
-    dark = bool((theme_data or {}).get("dark", False))
+def build_shell(dark=False, live_range=1):
     styles = theme_styles(dark)
+
+    def range_button(label, value):
+        selected = live_range == value
+        return html.Button(
+            label,
+            id={"type": "live-range-button", "value": value},
+            n_clicks=0,
+            style=styles["range_button_active"] if selected else styles["range_button"],
+        )
 
     return html.Div(
         className="app-dark" if dark else "app-light",
@@ -258,18 +231,14 @@ def render_shell(theme_data):
                         id="live-range-container",
                         style={"marginTop": "16px", "display": "block"},
                         children=[
-                            html.Label("Live range", style={"marginRight": "10px"}),
-                            dcc.Dropdown(
-                                id="live-range",
-                                options=[
-                                    {"label": "1 hour", "value": 1},
-                                    {"label": "6 hours", "value": 6},
-                                    {"label": "24 hours", "value": 24},
+                            html.Div("Live range", style={"marginBottom": "8px", "fontWeight": "600"}),
+                            html.Div(
+                                [
+                                    range_button("1 hour", 1),
+                                    range_button("6 hours", 6),
+                                    range_button("24 hours", 24),
                                 ],
-                                value=1,
-                                clearable=False,
-                                className="live-range-dropdown",
-                                style={"width": "220px", "display": "inline-block", "verticalAlign": "middle"},
+                                style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
                             ),
                         ]
                     ),
@@ -278,6 +247,51 @@ def render_shell(theme_data):
             )
         ],
     )
+
+
+app.layout = html.Div(
+    id="page-root",
+    children=[
+        dcc.Store(id="plant-rules-store", storage_type="local", data=DEFAULT_PLANT_RULES),
+        dcc.Store(id="theme-store", storage_type="local", data={"dark": False}),
+        dcc.Store(id="live-range-store", storage_type="memory", data=1),
+        dcc.Store(id="snapshot-store"),
+        dcc.Store(id="history-1-store"),
+        dcc.Store(id="history-6-store"),
+        dcc.Store(id="history-24-store"),
+        dcc.Store(id="history-7-store"),
+        dcc.Store(id="history-30-store"),
+        dcc.Interval(id="card-refresh", interval=CARD_REFRESH_MS, n_intervals=0),
+        dcc.Interval(id="history-fast-refresh", interval=HISTORY_FAST_REFRESH_MS, n_intervals=0),
+        dcc.Interval(id="history-7-refresh", interval=HISTORY_7_REFRESH_MS, n_intervals=0),
+        dcc.Interval(id="history-30-refresh", interval=HISTORY_30_REFRESH_MS, n_intervals=0),
+        html.Div(id="app-shell", children=build_shell(False, 1)),
+    ],
+)
+
+
+
+@app.callback(
+    Output("theme-store", "data"),
+    Input("toggle-dark-button", "n_clicks"),
+    State("theme-store", "data"),
+    prevent_initial_call=True,
+)
+def toggle_theme(n_clicks, theme_data):
+    dark = bool((theme_data or {}).get("dark", False))
+    return {"dark": not dark}
+
+
+@app.callback(
+    Output("app-shell", "children"),
+    Input("theme-store", "data"),
+    Input("live-range-store", "data"),
+)
+def render_shell(theme_data, live_range):
+    dark = bool((theme_data or {}).get("dark", False))
+    live_range = live_range or 1
+    return build_shell(dark, live_range)
+
 
 
 @app.callback(
@@ -651,6 +665,19 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
 
 
 @app.callback(
+    Output("live-range-store", "data"),
+    Input({"type": "live-range-button", "value": ALL}, "n_clicks"),
+    State("live-range-store", "data"),
+    prevent_initial_call=True,
+)
+def set_live_range(_, current_value):
+    triggered = ctx.triggered_id
+    if isinstance(triggered, dict) and triggered.get("type") == "live-range-button":
+        return triggered.get("value", current_value or 1)
+    return current_value or 1
+
+
+@app.callback(
     Output("live-range-container", "style"),
     Input("view-tabs", "value"),
 )
@@ -663,7 +690,7 @@ def toggle_live_range_visibility(tab):
 @app.callback(
     Output("tab-content", "children"),
     Input("view-tabs", "value"),
-    Input("live-range", "value"),
+    Input("live-range-store", "data"),
     Input("history-1-store", "data"),
     Input("history-6-store", "data"),
     Input("history-24-store", "data"),
