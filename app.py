@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 
 from dash import Dash, Input, Output, State, ALL, dcc, html, no_update
@@ -7,6 +6,7 @@ from flask import send_file
 from charts import build_figures
 from config import (
     CARD_REFRESH_MS,
+    CSV_LOG_PATH,
     DEFAULT_PLANT_RULES,
     FEEDS,
     HISTORY_REFRESH_MS,
@@ -40,21 +40,29 @@ from notifications import (
     send_ntfy_alert,
 )
 from styles import theme_styles
-from ui import build_health_panel, build_moisture_bar, build_settings_panel, make_card_shell, moisture_colors
+from ui import (
+    build_health_panel,
+    build_moisture_bar,
+    build_settings_panel,
+    make_card_shell,
+    moisture_colors,
+)
 
 app = Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
 app.title = "Soil Monitor Dashboard"
 
+
 @server.route("/download-csv")
 def download_csv():
     ensure_csv_exists()
     return send_file(
-        path_or_file="/opt/render/project/src/plant_readings.csv",
+        path_or_file=CSV_LOG_PATH,
         mimetype="text/csv",
         as_attachment=True,
         download_name="plant_readings.csv",
     )
+
 
 plant_names = list(FEEDS.keys())
 init_notification_state(plant_names)
@@ -68,13 +76,14 @@ app.layout = html.Div(
         dcc.Store(id="history-1-store"),
         dcc.Store(id="history-6-store"),
         dcc.Store(id="history-24-store"),
-
+        dcc.Store(id="history-7-store"),
+        dcc.Store(id="history-30-store"),
         dcc.Interval(id="card-refresh", interval=CARD_REFRESH_MS, n_intervals=0),
         dcc.Interval(id="history-refresh", interval=HISTORY_REFRESH_MS, n_intervals=0),
-
         html.Div(id="app-shell"),
     ],
 )
+
 
 @app.callback(
     Output("theme-store", "data"),
@@ -83,7 +92,7 @@ app.layout = html.Div(
     prevent_initial_call=True,
 )
 def toggle_theme(n_clicks, theme_data):
-    dark = bool(theme_data.get("dark", False))
+    dark = bool((theme_data or {}).get("dark", False))
     return {"dark": not dark}
 
 
@@ -92,7 +101,7 @@ def toggle_theme(n_clicks, theme_data):
     Input("theme-store", "data"),
 )
 def render_shell(theme_data):
-    dark = bool(theme_data.get("dark", False))
+    dark = bool((theme_data or {}).get("dark", False))
     styles = theme_styles(dark)
 
     return html.Div(
@@ -105,7 +114,10 @@ def render_shell(theme_data):
                         style=styles["header"],
                         children=[
                             html.H1("Plant Soil Monitor", style={"margin": "0 0 8px 0", "fontSize": "2rem"}),
-                            html.P("Track moisture, temperature, watering, alerts, and trends in one place.", style={"margin": "0", "opacity": "0.92"}),
+                            html.P(
+                                "Track moisture, temperature, watering, alerts, and trends in one place.",
+                                style={"margin": "0", "opacity": "0.92"},
+                            ),
                         ],
                     ),
                     html.Div(id="system-status"),
@@ -113,7 +125,12 @@ def render_shell(theme_data):
                     html.Div(id="alert-banner"),
                     html.Div(
                         [make_card_shell(plant, dark=dark) for plant in plant_names],
-                        style={"display": "flex", "flexWrap": "wrap", "gap": "14px", "marginBottom": "18px"},
+                        style={
+                            "display": "flex",
+                            "flexWrap": "wrap",
+                            "gap": "14px",
+                            "marginBottom": "18px",
+                        },
                     ),
                     dcc.Tabs(
                         id="view-tabs",
@@ -160,6 +177,7 @@ def render_shell(theme_data):
 def refresh_snapshot(n):
     snapshot, used_fallback = fetch_latest_snapshot()
     safe = {}
+
     for plant, row in snapshot.items():
         ts = row["timestamp"].isoformat() if row.get("timestamp") else None
         safe[plant] = {
@@ -168,6 +186,7 @@ def refresh_snapshot(n):
             "raw": row.get("raw"),
             "timestamp": ts,
         }
+
     return {"snapshot": safe, "used_fallback": used_fallback}
 
 
@@ -175,10 +194,12 @@ def refresh_snapshot(n):
     Output("history-1-store", "data"),
     Output("history-6-store", "data"),
     Output("history-24-store", "data"),
+    Output("history-7-store", "data"),
+    Output("history-30-store", "data"),
     Input("history-refresh", "n_intervals"),
 )
 def refresh_history(n):
-    def ser(histories):
+    def serialize(histories):
         out = {}
         for plant, row in histories.items():
             out[plant] = {
@@ -191,7 +212,16 @@ def refresh_history(n):
     h1, _ = fetch_history(hours=1)
     h6, _ = fetch_history(hours=6)
     h24, _ = fetch_history(hours=24)
-    return ser(h1), ser(h6), ser(h24)
+    h7, _ = fetch_history(hours=24 * 7)
+    h30, _ = fetch_history(hours=24 * 30)
+
+    return (
+        serialize(h1),
+        serialize(h6),
+        serialize(h24),
+        serialize(h7),
+        serialize(h30),
+    )
 
 
 @app.callback(
@@ -205,15 +235,24 @@ def refresh_history(n):
 )
 def save_rules(n_clicks, dry_values, low_values, high_values):
     new_rules = {}
+
     for i, plant in enumerate(plant_names):
         dry = dry_values[i]
         low = low_values[i]
         high = high_values[i]
+
         if dry is None or low is None or high is None:
             return no_update, "All values are required."
+
         if not (0 <= dry <= low <= high <= 100):
             return no_update, f"Invalid values for {plant}. Must satisfy dry ≤ ideal low ≤ ideal high."
-        new_rules[plant] = {"dry": dry, "ideal_low": low, "ideal_high": high}
+
+        new_rules[plant] = {
+            "dry": dry,
+            "ideal_low": low,
+            "ideal_high": high,
+        }
+
     init_notification_state(plant_names)
     return new_rules, "Rules saved."
 
@@ -241,7 +280,7 @@ def send_test_notification(n_clicks):
     Input("theme-store", "data"),
 )
 def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
-    dark = bool(theme_data.get("dark", False))
+    dark = bool((theme_data or {}).get("dark", False))
     styles = theme_styles(dark)
 
     snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
@@ -254,7 +293,6 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
     offline_alerts = []
     successful_fetches = 0
     latest_snapshot = {}
-
     order_rank = []
 
     for plant in plant_names:
@@ -274,6 +312,13 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
             rec, rec_color, bg_color = moisture_colors(moisture, rules_dict[plant])
             if offline:
                 rec, rec_color, bg_color = "Sensor offline", "#6c757d", "#f1f1f1"
+
+            latest_snapshot[plant] = {
+                "moisture": moisture,
+                "temp_f": temp_f,
+                "recommendation": rec,
+                "offline": offline,
+            }
 
             if should_log_reading(plant, moisture):
                 log_to_csv(
@@ -301,16 +346,8 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
             eta_hours = estimate_hours_until_dry(hist_times, hist_m, rules_dict[plant]["dry"])
             eta_text = "Dry ETA: unknown" if eta_hours is None else f"Dry ETA: ~{eta_hours:.1f} hr"
 
-            latest_snapshot[plant] = {
-                "moisture": moisture,
-                "temp_f": temp_f,
-                "recommendation": rec,
-                "offline": offline,
-            }
-
             successful_fetches += 1
             last_update = ts.astimezone(LOCAL_TZ).strftime("%m/%d %I:%M %p") if ts else "--"
-
             title = f"{meta['emoji']} {plant}"
 
             card = html.Div(
@@ -345,7 +382,7 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
                             html.Div(
                                 [
                                     html.Div("🌡 Temp", style={"color": styles["subtext"], "fontSize": "0.85rem"}),
-                                    html.Div(f"{temp_f:.1f}°F", style={"fontSize": "1.25rem", "fontWeight": "700"}),
+                                    html.Div(f"{min(temp_f, TEMP_F_MAX):.1f}°F", style={"fontSize": "1.25rem", "fontWeight": "700"}),
                                 ],
                                 style={"flex": "1"},
                             ),
@@ -393,7 +430,12 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
             )
             order_rank.append((-3, 999, plant, card))
             offline_alerts.append(plant)
-            latest_snapshot[plant] = {"moisture": None, "temp_f": None, "recommendation": "No data", "offline": True}
+            latest_snapshot[plant] = {
+                "moisture": None,
+                "temp_f": None,
+                "recommendation": "No data",
+                "offline": True,
+            }
 
     maybe_send_daily_summary(latest_snapshot)
 
@@ -416,23 +458,58 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
 
     if offline_alerts and dry_alerts:
         alert_banner = html.Div(
-            [html.Div(f"Offline sensors: {', '.join(offline_alerts)}"), html.Div(f"Water alerts: {', '.join(dry_alerts)}", style={"marginTop": "6px"})],
-            style={"backgroundColor": "#fff4e5", "color": "#8a5a00", "border": "1px solid #f0d9a7", "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
+            [
+                html.Div(f"Offline sensors: {', '.join(offline_alerts)}"),
+                html.Div(f"Water alerts: {', '.join(dry_alerts)}", style={"marginTop": "6px"}),
+            ],
+            style={
+                "backgroundColor": "#fff4e5",
+                "color": "#8a5a00",
+                "border": "1px solid #f0d9a7",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
+                "marginBottom": "16px",
+                "fontWeight": "700",
+            },
         )
     elif offline_alerts:
         alert_banner = html.Div(
             f"Offline sensors: {', '.join(offline_alerts)}",
-            style={"backgroundColor": "#f2f2f2", "color": "#555", "border": "1px solid #d6d6d6", "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
+            style={
+                "backgroundColor": "#f2f2f2",
+                "color": "#555",
+                "border": "1px solid #d6d6d6",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
+                "marginBottom": "16px",
+                "fontWeight": "700",
+            },
         )
     elif dry_alerts:
         alert_banner = html.Div(
             f"Water alert: {', '.join(dry_alerts)}",
-            style={"backgroundColor": "#ffeaea", "color": "#a94442", "border": "1px solid #ebccd1", "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
+            style={
+                "backgroundColor": "#ffeaea",
+                "color": "#a94442",
+                "border": "1px solid #ebccd1",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
+                "marginBottom": "16px",
+                "fontWeight": "700",
+            },
         )
     else:
         alert_banner = html.Div(
             "No urgent watering alerts or offline sensors.",
-            style={"backgroundColor": "#eef9ee", "color": "#2f6b2f", "border": "1px solid #cfe9cf", "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
+            style={
+                "backgroundColor": "#eef9ee",
+                "color": "#2f6b2f",
+                "border": "1px solid #cfe9cf",
+                "padding": "14px 18px",
+                "borderRadius": "16px",
+                "marginBottom": "16px",
+                "fontWeight": "700",
+            },
         )
 
     return cards + [system_status, health_panel, alert_banner]
@@ -445,14 +522,16 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
     Input("history-1-store", "data"),
     Input("history-6-store", "data"),
     Input("history-24-store", "data"),
+    Input("history-7-store", "data"),
+    Input("history-30-store", "data"),
     Input("plant-rules-store", "data"),
     Input("theme-store", "data"),
 )
-def render_tab(tab, live_range, h1, h6, h24, rules_dict, theme_data):
-    dark = bool(theme_data.get("dark", False))
+def render_tab(tab, live_range, h1, h6, h24, h7, h30, rules_dict, theme_data):
+    dark = bool((theme_data or {}).get("dark", False))
     styles = theme_styles(dark)
 
-    def deser(hist):
+    def deserialize(hist):
         out = {}
         hist = hist or {}
         for plant, row in hist.items():
@@ -467,8 +546,18 @@ def render_tab(tab, live_range, h1, h6, h24, rules_dict, theme_data):
         return build_settings_panel(rules_dict, dark=dark)
 
     if tab == "live":
-        selected = {1: deser(h1), 6: deser(h6), 24: deser(h24)}.get(live_range, deser(h1))
-        moisture_fig, temp_fig = build_figures(selected, rules_dict, label_suffix=f"Live ({live_range}h)", dark=dark, temp_max=TEMP_F_MAX)
+        live_hist = {
+            1: deserialize(h1),
+            6: deserialize(h6),
+            24: deserialize(h24),
+        }.get(live_range, deserialize(h1))
+        moisture_fig, temp_fig = build_figures(
+            live_hist,
+            rules_dict,
+            label_suffix=f"Live ({live_range}h)",
+            dark=dark,
+            temp_max=TEMP_F_MAX,
+        )
         return html.Div(
             [
                 html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
@@ -477,7 +566,14 @@ def render_tab(tab, live_range, h1, h6, h24, rules_dict, theme_data):
         )
 
     if tab == "weekly":
-        moisture_fig, temp_fig = build_figures(deser(h24), rules_dict, label_suffix="Weekly", dark=dark, temp_max=TEMP_F_MAX)
+        weekly_hist = deserialize(h7)
+        moisture_fig, temp_fig = build_figures(
+            weekly_hist,
+            rules_dict,
+            label_suffix="Weekly",
+            dark=dark,
+            temp_max=TEMP_F_MAX,
+        )
         return html.Div(
             [
                 html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
@@ -485,7 +581,14 @@ def render_tab(tab, live_range, h1, h6, h24, rules_dict, theme_data):
             ]
         )
 
-    moisture_fig, temp_fig = build_figures(deser(h24), rules_dict, label_suffix="Monthly", dark=dark, temp_max=TEMP_F_MAX)
+    monthly_hist = deserialize(h30)
+    moisture_fig, temp_fig = build_figures(
+        monthly_hist,
+        rules_dict,
+        label_suffix="Monthly",
+        dark=dark,
+        temp_max=TEMP_F_MAX,
+    )
     return html.Div(
         [
             html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
