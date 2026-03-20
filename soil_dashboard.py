@@ -44,6 +44,7 @@ CSV_RETENTION_DAYS = 35
 
 NTFY_MIN_INTERVAL = 60
 SENSOR_OFFLINE_MINUTES = 60
+TEMP_F_MAX = 120.0
 
 # Watering detection
 WATERING_JUMP_THRESHOLD = 8.0
@@ -170,6 +171,7 @@ def get_history_for_days(feed_key, session, days, limit=1000):
             payload = json.loads(value)
             moisture = float(payload.get("moisture_pct"))
             temp_f = float(payload.get("temp_f"))
+            temp_f = min(temp_f, TEMP_F_MAX)
         except (ValueError, TypeError, json.JSONDecodeError):
             continue
 
@@ -621,6 +623,7 @@ def build_settings_panel(rules_dict):
                 html.Span(f"Watering jump threshold: {WATERING_JUMP_THRESHOLD:.1f}%", style=CHIP_STYLE),
                 html.Span(f"CSV retention: {CSV_RETENTION_DAYS} days", style=CHIP_STYLE),
                 html.Span(f"CSV rows: {get_csv_row_count()}", style=CHIP_STYLE),
+                html.Span(f"Temp cap: {TEMP_F_MAX:.0f}°F", style=CHIP_STYLE),
             ]
         ),
         html.P(f"CSV file: {CSV_LOG_PATH}", style={"color": "#5b6b63"}),
@@ -741,7 +744,7 @@ def build_live_figures(session, rules_dict):
             print(f"Failed live history for {plant}: {e}", flush=True)
 
     moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
-    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=None)
+    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=TEMP_F_MAX)
 
     return (
         style_figure(moisture_fig, "Live Moisture (Last Hour)", "Moisture (%)", moisture_range),
@@ -776,7 +779,7 @@ def build_weekly_figures(session, rules_dict):
             print(f"Failed weekly history for {plant}: {e}", flush=True)
 
     moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
-    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=None)
+    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=TEMP_F_MAX)
 
     return (
         style_figure(weekly_moisture_fig, "Weekly Moisture Trend", "Moisture (%)", moisture_range),
@@ -811,7 +814,7 @@ def build_monthly_figures(session, rules_dict):
             print(f"Failed monthly history for {plant}: {e}", flush=True)
 
     moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
-    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=None)
+    temp_range = get_axis_range(all_temp, pad=5, min_floor=0, max_cap=TEMP_F_MAX)
 
     return (
         style_figure(monthly_moisture_fig, "Monthly Moisture Trend", "Moisture (%)", moisture_range),
@@ -984,6 +987,7 @@ def update_cards(n, rules_dict):
             payload = json.loads(payload_text)
             moisture = float(payload.get("moisture_pct"))
             temp_f = float(payload.get("temp_f"))
+            temp_f = min(temp_f, TEMP_F_MAX)
 
             ts = datetime.fromisoformat(created_at.replace("Z", "+00:00")) if created_at else None
             offline = maybe_send_offline_alert(plant, ts)
