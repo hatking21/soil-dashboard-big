@@ -101,7 +101,7 @@ def build_moisture_bar(moisture, color, dark=False):
     )
 
 
-def build_health_panel(health_state, used_fallback, dark=False):
+def build_health_panel(health_state, used_fallback, dark=False, show_details=False):
     styles = theme_styles(dark)
 
     def pill(label, ok):
@@ -123,16 +123,17 @@ def build_health_panel(health_state, used_fallback, dark=False):
         ),
     ]
 
-    for label, ok in health_state.get("startup_checks", []):
-        items.append(
-            html.Span(
-                f"{label}: {'OK' if ok else 'Missing'}",
-                style={
-                    **styles["chip"],
-                    "color": styles["status_border"]["good"] if ok else styles["status_border"]["dry"],
-                },
+    if show_details:
+        for label, ok in health_state.get("startup_checks", []):
+            items.append(
+                html.Span(
+                    f"{label}: {'OK' if ok else 'Missing'}",
+                    style={
+                        **styles["chip"],
+                        "color": styles["status_border"]["good"] if ok else styles["status_border"]["dry"],
+                    },
+                )
             )
-        )
 
     if used_fallback:
         items.append(
@@ -153,7 +154,7 @@ def build_health_panel(health_state, used_fallback, dark=False):
     return html.Div(items, style={**styles["section"], "marginBottom": "16px"})
 
 
-def build_settings_panel(rules_dict, dark=False):
+def build_settings_panel(rules_dict, dark=False, health_state_data=None, used_fallback=False):
     styles = theme_styles(dark)
 
     input_style = {
@@ -164,6 +165,8 @@ def build_settings_panel(rules_dict, dark=False):
         "backgroundColor": styles["input_bg"],
         "color": styles["input_text"],
     }
+
+    health_state_data = health_state_data or {}
 
     children = [
         html.H3("Settings", style={"marginTop": "0"}),
@@ -179,6 +182,13 @@ def build_settings_panel(rules_dict, dark=False):
         ),
         html.P(f"CSV last write: {get_csv_last_write_time()}", style={"color": styles["subtext"]}),
         html.P(f"CSV status: {last_csv_status}", style={"fontWeight": "600"}),
+        html.Div(
+            [
+                html.H4("Startup / service status", style={"marginTop": "6px", "marginBottom": "10px"}),
+                build_health_panel(health_state_data, used_fallback, dark=dark, show_details=True),
+            ],
+            style={"marginBottom": "14px"},
+        ),
     ]
 
     for plant in FEEDS:
