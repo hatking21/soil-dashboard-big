@@ -1,12 +1,31 @@
-html, body {
+html, body, #react-entry-point {
   margin: 0;
   padding: 0;
-}
-
-.app-light, .app-light * {
+  min-height: 100%;
+  background: linear-gradient(180deg, #f5fbf7 0%, #eef4f8 100%);
   color-scheme: light;
 }
 
-.app-dark, .app-dark * {
+#page-root {
+  min-height: 100vh;
+}
+
+#page-root.app-light {
+  background: linear-gradient(180deg, #f5fbf7 0%, #eef4f8 100%);
+  color-scheme: light;
+}
+
+#page-root.app-dark {
+  background: #071224;
+  color-scheme: dark;
+}
+
+.app-light,
+.app-light * {
+  color-scheme: light;
+}
+
+.app-dark,
+.app-dark * {
   color-scheme: dark;
 }
