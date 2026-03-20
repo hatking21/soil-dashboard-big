@@ -7,7 +7,7 @@ from config import (
     TEMP_F_MAX,
     WATERING_JUMP_THRESHOLD,
 )
-from data_layer import get_csv_last_write_time, get_csv_row_count, health_state, last_csv_status
+from data_layer import get_csv_last_write_time, get_csv_row_count, last_csv_status
 from styles import theme_styles
 
 
