@@ -1,81 +1,12 @@
-/* Scoped theme fixes for Dash react-select dropdowns */
-.app-light .live-range-dropdown,
-.app-dark .live-range-dropdown {
-  display: inline-block;
-  vertical-align: middle;
+html, body {
+  margin: 0;
+  padding: 0;
 }
 
-.app-light .live-range-dropdown .Select-control,
-.app-light .live-range-dropdown .Select-menu-outer,
-.app-light .live-range-dropdown .Select-menu,
-.app-light .live-range-dropdown .Select-value,
-.app-light .live-range-dropdown .Select-placeholder,
-.app-light .live-range-dropdown .Select-input > input,
-.app-light .live-range-dropdown .VirtualizedSelectOption,
-.app-light .live-range-dropdown .VirtualizedSelectFocusedOption {
-  background: #ffffff !important;
-  color: #1f2b24 !important;
+.app-light, .app-light * {
+  color-scheme: light;
 }
 
-.app-light .live-range-dropdown .Select-control {
-  border: 1px solid #d7dee8 !important;
-  border-radius: 10px !important;
-  box-shadow: none !important;
-}
-
-.app-light .live-range-dropdown .Select-arrow-zone,
-.app-light .live-range-dropdown .Select-clear-zone {
-  color: #1f2b24 !important;
-}
-
-.app-light .live-range-dropdown .VirtualizedSelectFocusedOption {
-  background: #eef4f8 !important;
-}
-
-.app-dark .live-range-dropdown .Select-control,
-.app-dark .live-range-dropdown .Select-menu-outer,
-.app-dark .live-range-dropdown .Select-menu,
-.app-dark .live-range-dropdown .Select-value,
-.app-dark .live-range-dropdown .Select-placeholder,
-.app-dark .live-range-dropdown .Select-input > input,
-.app-dark .live-range-dropdown .VirtualizedSelectOption,
-.app-dark .live-range-dropdown .VirtualizedSelectFocusedOption,
-.app-dark .live-range-dropdown .Select-option,
-.app-dark .live-range-dropdown .Select-value-label {
-  background: #0f1c31 !important;
-  color: #eef4fb !important;
-}
-
-.app-dark .live-range-dropdown .Select-control {
-  border: 1px solid #4ea3ff !important;
-  border-radius: 10px !important;
-  box-shadow: none !important;
-}
-
-.app-dark .live-range-dropdown .is-open > .Select-control,
-.app-dark .live-range-dropdown .Select-control:hover {
-  background: #132540 !important;
-}
-
-.app-dark .live-range-dropdown .Select-menu-outer {
-  border: 1px solid #355b87 !important;
-  box-shadow: 0 8px 22px rgba(0,0,0,0.35) !important;
-}
-
-.app-dark .live-range-dropdown .Select-arrow-zone,
-.app-dark .live-range-dropdown .Select-clear-zone,
-.app-dark .live-range-dropdown .Select-arrow {
-  color: #eef4fb !important;
-  border-top-color: #eef4fb !important;
-}
-
-.app-dark .live-range-dropdown .VirtualizedSelectFocusedOption,
-.app-dark .live-range-dropdown .Select-option.is-focused {
-  background: #1d3557 !important;
-  color: #f8fbff !important;
-}
-
-.app-dark .live-range-dropdown .Select-option.is-selected {
-  background: #27486d !important;
-  color: #ffffff !important;
+.app-dark, .app-dark * {
+  color-scheme: dark;
 }
