@@ -1,48 +1,68 @@
 def theme_styles(dark: bool):
     if dark:
-        page_bg = "#0b1220"
-        panel_bg = "rgba(17, 24, 39, 0.96)"
-        text = "#e5edf5"
-        subtext = "#9fb0c3"
-        border = "rgba(148, 163, 184, 0.22)"
+        page_bg = "#071224"
+        panel_bg = "rgba(10, 20, 38, 0.94)"
+        text = "#eef4fb"
+        subtext = "#a7b4c6"
+        border = "rgba(148, 163, 184, 0.18)"
 
-        card_shell_bg = "#111827"
-        chip_bg = "#182334"
-        plot_bg = "#0f172a"
-        input_bg = "#0f172a"
-        input_text = "#e5edf5"
+        card_shell_bg = "#0b1628"
+        chip_bg = "#162235"
+        plot_bg = "#0b1628"
+        input_bg = "#0f1c31"
+        input_text = "#eef4fb"
 
-        header_grad = "linear-gradient(135deg, #185c47 0%, #1e4f7a 100%)"
+        header_grad = "linear-gradient(135deg, #16645a 0%, #235c8a 100%)"
 
-        tab_bg = "#132033"
-        tab_selected = "#1f3c5c"
+        tab_bg = "#12233b"
+        tab_selected = "#27486d"
 
-        button_bg = "#182334"
-        button_hover_bg = "#1d2a3d"
-        button_primary_bg = "#dbe7f3"
-        button_primary_text = "#0f172a"
+        button_bg = "#162235"
+        button_text = "#eef4fb"
+        button_primary_bg = "#1d3557"
+        button_primary_text = "#f8fbff"
+        button_primary_border = "#4ea3ff"
 
         status_bg = {
-            "dry": "#311414",
-            "check": "#35240f",
-            "good": "#10281d",
-            "wet": "#0f2431",
-            "offline": "#1c2430",
-            "nodata": "#161f2b",
+            "dry": "#3a1318",
+            "check": "#3a2710",
+            "good": "#113222",
+            "wet": "#112d3b",
+            "offline": "#1d2633",
+            "nodata": "#182231",
         }
         status_border = {
-            "dry": "#f87171",
-            "check": "#f59e0b",
-            "good": "#34d399",
-            "wet": "#38bdf8",
-            "offline": "#94a3b8",
-            "nodata": "#64748b",
+            "dry": "#ff6b6b",
+            "check": "#ffb347",
+            "good": "#33d17a",
+            "wet": "#4db8ff",
+            "offline": "#93a4b8",
+            "nodata": "#66788f",
         }
-        bar_track = "#223044"
+
+        # suggestion bubble colors
+        status_pill_bg = {
+            "dry": "#5a1d24",
+            "check": "#5a3b12",
+            "good": "#17492f",
+            "wet": "#163f55",
+            "offline": "#2a3442",
+            "nodata": "#243041",
+        }
+        status_pill_text = {
+            "dry": "#ff9a9a",
+            "check": "#ffd089",
+            "good": "#7ff0b2",
+            "wet": "#8fd8ff",
+            "offline": "#c2ccd8",
+            "nodata": "#c2ccd8",
+        }
+
+        bar_track = "#24354d"
 
     else:
         page_bg = "linear-gradient(180deg, #f5fbf7 0%, #eef4f8 100%)"
-        panel_bg = "rgba(255,255,255,0.86)"
+        panel_bg = "rgba(255,255,255,0.88)"
         text = "#1f2b24"
         subtext = "#5b6b63"
         border = "rgba(0,0,0,0.06)"
@@ -59,9 +79,10 @@ def theme_styles(dark: bool):
         tab_selected = "#dcefe4"
 
         button_bg = "#ffffff"
-        button_hover_bg = "#f7faf8"
-        button_primary_bg = "rgba(255,255,255,0.96)"
+        button_text = "#1f2b24"
+        button_primary_bg = "#ffffff"
         button_primary_text = "#1f2b24"
+        button_primary_border = "#d7dee8"
 
         status_bg = {
             "dry": "#fff1ef",
@@ -79,6 +100,24 @@ def theme_styles(dark: bool):
             "offline": "#6b7280",
             "nodata": "#cccccc",
         }
+
+        status_pill_bg = {
+            "dry": "#ffe0dc",
+            "check": "#ffe8c7",
+            "good": "#dff7e8",
+            "wet": "#dff1fb",
+            "offline": "#e9edf3",
+            "nodata": "#eceff3",
+        }
+        status_pill_text = {
+            "dry": "#c0392b",
+            "check": "#b56a16",
+            "good": "#248a52",
+            "wet": "#256f99",
+            "offline": "#5f6c7b",
+            "nodata": "#5f6c7b",
+        }
+
         bar_track = "#e9efeb"
 
     return {
@@ -119,18 +158,18 @@ def theme_styles(dark: bool):
         },
         "button": {
             "padding": "10px 16px",
-            "borderRadius": "10px",
+            "borderRadius": "12px",
             "border": f"1px solid {border}",
             "cursor": "pointer",
             "backgroundColor": button_bg,
-            "color": text,
+            "color": button_text,
             "fontWeight": "600",
             "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
         },
         "button_primary": {
             "padding": "10px 16px",
-            "borderRadius": "10px",
-            "border": "none",
+            "borderRadius": "12px",
+            "border": f"1px solid {button_primary_border}",
             "cursor": "pointer",
             "backgroundColor": button_primary_bg,
             "color": button_primary_text,
@@ -171,6 +210,7 @@ def theme_styles(dark: bool):
         "border": border,
         "status_bg": status_bg,
         "status_border": status_border,
+        "status_pill_bg": status_pill_bg,
+        "status_pill_text": status_pill_text,
         "bar_track": bar_track,
-        "button_hover_bg": button_hover_bg,
     }
