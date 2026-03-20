@@ -1,9 +1,13 @@
-html, body, #react-entry-point {
+html,
+body,
+#react-entry-point {
   margin: 0;
   padding: 0;
+  width: 100%;
   min-height: 100%;
   background: #071224;
   color-scheme: dark;
+  overflow-x: hidden;
 }
 
 body {
@@ -12,7 +16,10 @@ body {
 
 #page-root,
 .app-dark {
+  width: 100%;
   min-height: 100vh;
+  margin: 0;
+  padding: 0;
   background: #071224;
   color-scheme: dark;
 }
