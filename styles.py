@@ -1,30 +1,85 @@
 def theme_styles(dark: bool):
     if dark:
-        page_bg = "#0f1720"
-        panel_bg = "rgba(20,28,38,0.94)"
-        text = "#e6edf3"
-        subtext = "#a7b4bf"
-        border = "rgba(255,255,255,0.10)"
-        chip_bg = "#18222d"
-        plot_bg = "#111923"
-        header_grad = "linear-gradient(135deg, #1f7a5d 0%, #265f84 100%)"
-        input_bg = "#111923"
-        input_text = "#e6edf3"
-        tab_bg = "#18222d"
-        tab_selected = "#245f8f"
+        page_bg = "#0b1220"
+        panel_bg = "rgba(17, 24, 39, 0.96)"
+        text = "#e5edf5"
+        subtext = "#9fb0c3"
+        border = "rgba(148, 163, 184, 0.22)"
+
+        card_shell_bg = "#111827"
+        chip_bg = "#182334"
+        plot_bg = "#0f172a"
+        input_bg = "#0f172a"
+        input_text = "#e5edf5"
+
+        header_grad = "linear-gradient(135deg, #185c47 0%, #1e4f7a 100%)"
+
+        tab_bg = "#132033"
+        tab_selected = "#1f3c5c"
+
+        button_bg = "#182334"
+        button_hover_bg = "#1d2a3d"
+        button_primary_bg = "#dbe7f3"
+        button_primary_text = "#0f172a"
+
+        status_bg = {
+            "dry": "#311414",
+            "check": "#35240f",
+            "good": "#10281d",
+            "wet": "#0f2431",
+            "offline": "#1c2430",
+            "nodata": "#161f2b",
+        }
+        status_border = {
+            "dry": "#f87171",
+            "check": "#f59e0b",
+            "good": "#34d399",
+            "wet": "#38bdf8",
+            "offline": "#94a3b8",
+            "nodata": "#64748b",
+        }
+        bar_track = "#223044"
+
     else:
         page_bg = "linear-gradient(180deg, #f5fbf7 0%, #eef4f8 100%)"
-        panel_bg = "rgba(255,255,255,0.82)"
+        panel_bg = "rgba(255,255,255,0.86)"
         text = "#1f2b24"
         subtext = "#5b6b63"
         border = "rgba(0,0,0,0.06)"
+
+        card_shell_bg = "#ffffff"
         chip_bg = "#ffffff"
         plot_bg = "#ffffff"
-        header_grad = "linear-gradient(135deg, #2e7d5a 0%, #4e9c78 100%)"
         input_bg = "#ffffff"
         input_text = "#1f2b24"
+
+        header_grad = "linear-gradient(135deg, #2e7d5a 0%, #4e9c78 100%)"
+
         tab_bg = "#f7faf8"
         tab_selected = "#dcefe4"
+
+        button_bg = "#ffffff"
+        button_hover_bg = "#f7faf8"
+        button_primary_bg = "rgba(255,255,255,0.96)"
+        button_primary_text = "#1f2b24"
+
+        status_bg = {
+            "dry": "#fff1ef",
+            "check": "#fff7eb",
+            "good": "#f2fff7",
+            "wet": "#eef9ff",
+            "offline": "#f1f5f9",
+            "nodata": "#f5f5f5",
+        }
+        status_border = {
+            "dry": "#c0392b",
+            "check": "#d9822b",
+            "good": "#2e8b57",
+            "wet": "#2f7ea1",
+            "offline": "#6b7280",
+            "nodata": "#cccccc",
+        }
+        bar_track = "#e9efeb"
 
     return {
         "page": {
@@ -48,17 +103,17 @@ def theme_styles(dark: bool):
         },
         "section": {
             "backgroundColor": panel_bg,
-            "backdropFilter": "blur(4px)",
+            "backdropFilter": "blur(6px)",
             "border": f"1px solid {border}",
             "borderRadius": "18px",
             "padding": "16px",
-            "boxShadow": "0 6px 20px rgba(0,0,0,0.05)",
+            "boxShadow": "0 6px 20px rgba(0,0,0,0.08)",
         },
         "card_shell": {
             "width": "272px",
             "borderRadius": "18px",
-            "backgroundColor": chip_bg,
-            "boxShadow": "0 10px 24px rgba(0,0,0,0.06)",
+            "backgroundColor": card_shell_bg,
+            "boxShadow": "0 10px 24px rgba(0,0,0,0.12)",
             "border": f"1px solid {border}",
             "overflow": "hidden",
         },
@@ -67,10 +122,20 @@ def theme_styles(dark: bool):
             "borderRadius": "10px",
             "border": f"1px solid {border}",
             "cursor": "pointer",
-            "backgroundColor": chip_bg,
+            "backgroundColor": button_bg,
             "color": text,
             "fontWeight": "600",
-            "boxShadow": "0 2px 8px rgba(0,0,0,0.04)",
+            "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
+        },
+        "button_primary": {
+            "padding": "10px 16px",
+            "borderRadius": "10px",
+            "border": "none",
+            "cursor": "pointer",
+            "backgroundColor": button_primary_bg,
+            "color": button_primary_text,
+            "fontWeight": "700",
+            "boxShadow": "0 6px 18px rgba(0,0,0,0.18)",
         },
         "chip": {
             "display": "inline-block",
@@ -78,7 +143,7 @@ def theme_styles(dark: bool):
             "borderRadius": "999px",
             "backgroundColor": chip_bg,
             "border": f"1px solid {border}",
-            "boxShadow": "0 2px 8px rgba(0,0,0,0.04)",
+            "boxShadow": "0 2px 8px rgba(0,0,0,0.06)",
             "fontSize": "0.95rem",
             "marginRight": "10px",
             "marginBottom": "10px",
@@ -104,4 +169,8 @@ def theme_styles(dark: bool):
         "input_bg": input_bg,
         "input_text": input_text,
         "border": border,
+        "status_bg": status_bg,
+        "status_border": status_border,
+        "bar_track": bar_track,
+        "button_hover_bg": button_hover_bg,
     }
