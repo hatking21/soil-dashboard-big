@@ -11,16 +11,49 @@ from data_layer import get_csv_last_write_time, get_csv_row_count, last_csv_stat
 from styles import theme_styles
 
 
-def moisture_colors(moisture, rules):
+def moisture_colors(moisture, rules, dark=False, offline=False):
+    styles = theme_styles(dark)
+
+    if offline:
+        return (
+            "Sensor offline",
+            styles["status_border"]["offline"],
+            styles["status_bg"]["offline"],
+        )
+
     if moisture is None:
-        return "No data", "#6b7280", "#f3f4f6"
+        return (
+            "No data",
+            styles["status_border"]["nodata"],
+            styles["status_bg"]["nodata"],
+        )
+
     if moisture < rules["dry"]:
-        return "Water now", "#c0392b", "#fff1ef"
+        return (
+            "Water now",
+            styles["status_border"]["dry"],
+            styles["status_bg"]["dry"],
+        )
+
     if moisture < rules["ideal_low"]:
-        return "Check soon", "#d9822b", "#fff7eb"
+        return (
+            "Check soon",
+            styles["status_border"]["check"],
+            styles["status_bg"]["check"],
+        )
+
     if moisture <= rules["ideal_high"]:
-        return "Moisture looks good", "#2e8b57", "#f2fff7"
-    return "Wet / hold off", "#2f7ea1", "#eef9ff"
+        return (
+            "Moisture looks good",
+            styles["status_border"]["good"],
+            styles["status_bg"]["good"],
+        )
+
+    return (
+        "Wet / hold off",
+        styles["status_border"]["wet"],
+        styles["status_bg"]["wet"],
+    )
 
 
 def make_card_shell(plant, dark=False):
@@ -28,16 +61,27 @@ def make_card_shell(plant, dark=False):
     return html.Div(id=f"card-{plant}", style=styles["card_shell"])
 
 
-def build_moisture_bar(moisture, color):
+def build_moisture_bar(moisture, color, dark=False):
+    styles = theme_styles(dark)
     safe = max(0, min(100, moisture))
+
     return html.Div(
         [
             html.Div("Moisture level", style={"fontSize": "0.85rem", "marginBottom": "6px"}),
             html.Div(
-                [html.Div(style={"width": f"{safe}%", "height": "100%", "background": color, "borderRadius": "999px"})],
+                [
+                    html.Div(
+                        style={
+                            "width": f"{safe}%",
+                            "height": "100%",
+                            "background": color,
+                            "borderRadius": "999px",
+                        }
+                    )
+                ],
                 style={
                     "height": "12px",
-                    "backgroundColor": "#e9efeb",
+                    "backgroundColor": styles["bar_track"],
                     "borderRadius": "999px",
                     "overflow": "hidden",
                 },
@@ -53,35 +97,64 @@ def build_health_panel(health_state, used_fallback, dark=False):
     def pill(label, ok):
         return html.Span(
             f"{label}: {'OK' if ok else 'Issue'}",
-            style={**styles["chip"], "color": "#2e8b57" if ok else "#c0392b"},
+            style={
+                **styles["chip"],
+                "color": styles["status_border"]["good"] if ok else styles["status_border"]["dry"],
+            },
         )
 
     items = [
         pill("Adafruit", health_state["adafruit_ok"]),
         pill("CSV", health_state["csv_ok"]),
         pill("Water log", health_state["watering_log_ok"]),
-        html.Span(f"Last successful fetch: {health_state.get('last_successful_fetch', 'Never')}", style=styles["chip"]),
+        html.Span(
+            f"Last successful fetch: {health_state.get('last_successful_fetch', 'Never')}",
+            style=styles["chip"],
+        ),
     ]
 
     for label, ok in health_state.get("startup_checks", []):
         items.append(
             html.Span(
                 f"{label}: {'OK' if ok else 'Missing'}",
-                style={**styles["chip"], "color": "#2e8b57" if ok else "#c0392b"},
+                style={
+                    **styles["chip"],
+                    "color": styles["status_border"]["good"] if ok else styles["status_border"]["dry"],
+                },
             )
         )
 
     if used_fallback:
-        items.append(html.Span("Using last good data", style={**styles["chip"], "color": "#d9822b"}))
+        items.append(
+            html.Span(
+                "Using last good data",
+                style={**styles["chip"], "color": styles["status_border"]["check"]},
+            )
+        )
 
     if health_state.get("last_error"):
-        items.append(html.Div(f"Last error: {health_state['last_error']}", style={"fontSize": "0.9rem"}))
+        items.append(
+            html.Div(
+                f"Last error: {health_state['last_error']}",
+                style={"fontSize": "0.9rem", "color": styles["subtext"]},
+            )
+        )
 
     return html.Div(items, style={**styles["section"], "marginBottom": "16px"})
 
 
 def build_settings_panel(rules_dict, dark=False):
     styles = theme_styles(dark)
+
+    input_style = {
+        "width": "100%",
+        "padding": "10px",
+        "borderRadius": "10px",
+        "border": f"1px solid {styles['border']}",
+        "backgroundColor": styles["input_bg"],
+        "color": styles["input_text"],
+    }
+
     children = [
         html.H3("Settings", style={"marginTop": "0"}),
         html.P("Rules are stored in this browser.", style={"color": styles["subtext"]}),
@@ -116,14 +189,7 @@ def build_settings_panel(rules_dict, dark=False):
                                         min=0,
                                         max=100,
                                         step=1,
-                                        style={
-                                            "width": "100%",
-                                            "padding": "10px",
-                                            "borderRadius": "10px",
-                                            "border": f"1px solid {styles['border']}",
-                                            "backgroundColor": styles["input_bg"],
-                                            "color": styles["input_text"],
-                                        },
+                                        style=input_style,
                                     ),
                                 ],
                                 style={"flex": "1"},
@@ -138,14 +204,7 @@ def build_settings_panel(rules_dict, dark=False):
                                         min=0,
                                         max=100,
                                         step=1,
-                                        style={
-                                            "width": "100%",
-                                            "padding": "10px",
-                                            "borderRadius": "10px",
-                                            "border": f"1px solid {styles['border']}",
-                                            "backgroundColor": styles["input_bg"],
-                                            "color": styles["input_text"],
-                                        },
+                                        style=input_style,
                                     ),
                                 ],
                                 style={"flex": "1"},
@@ -160,14 +219,7 @@ def build_settings_panel(rules_dict, dark=False):
                                         min=0,
                                         max=100,
                                         step=1,
-                                        style={
-                                            "width": "100%",
-                                            "padding": "10px",
-                                            "borderRadius": "10px",
-                                            "border": f"1px solid {styles['border']}",
-                                            "backgroundColor": styles["input_bg"],
-                                            "color": styles["input_text"],
-                                        },
+                                        style=input_style,
                                     ),
                                 ],
                                 style={"flex": "1"},
@@ -183,17 +235,32 @@ def build_settings_panel(rules_dict, dark=False):
     children.append(
         html.Div(
             [
-                html.Button("Save Rules", id="save-rules-button", n_clicks=0, style={**styles["button"], "marginRight": "12px"}),
-                html.Button("Send ntfy Test", id="ntfy-test-button", n_clicks=0, style={**styles["button"], "marginRight": "12px"}),
+                html.Button(
+                    "Save Rules",
+                    id="save-rules-button",
+                    n_clicks=0,
+                    style={**styles["button"], "marginRight": "12px"},
+                ),
+                html.Button(
+                    "Send ntfy Test",
+                    id="ntfy-test-button",
+                    n_clicks=0,
+                    style={**styles["button"], "marginRight": "12px"},
+                ),
                 html.A(
                     "Download CSV",
                     href="/download-csv",
                     target="_blank",
-                    style={**styles["button"], "display": "inline-block", "textDecoration": "none"},
+                    style={
+                        **styles["button"],
+                        "display": "inline-block",
+                        "textDecoration": "none",
+                    },
                 ),
             ]
         )
     )
+
     children.append(html.Div(id="save-rules-status", style={"marginTop": "10px", "fontWeight": "600"}))
     children.append(html.Div(id="ntfy-test-status", style={"marginTop": "10px", "fontWeight": "600"}))
 
