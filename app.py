@@ -256,7 +256,7 @@ def render_shell(theme_data):
                     ),
                     html.Div(
                         id="live-range-container",
-                        style={"marginTop": "16px"},
+                        style={"marginTop": "16px", "display": "block"},
                         children=[
                             html.Label("Live range", style={"marginRight": "10px"}),
                             dcc.Dropdown(
@@ -550,7 +550,54 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
         style={**styles["section"], "marginBottom": "16px"},
     )
 
-    health_panel = build_health_panel(health_state, used_fallback, dark=dark)
+    health_panel = build_health_panel(health_state, used_fallback, dark=dark, show_details=False)
+
+    if dark:
+        alert_styles = {
+            "mixed": {
+                "backgroundColor": "#3a2814",
+                "color": "#ffd089",
+                "border": "1px solid #7a5b22",
+            },
+            "offline": {
+                "backgroundColor": "#1d2633",
+                "color": "#c2ccd8",
+                "border": "1px solid #5f738a",
+            },
+            "dry": {
+                "backgroundColor": "#3a1318",
+                "color": "#ff9a9a",
+                "border": "1px solid #a94442",
+            },
+            "ok": {
+                "backgroundColor": "#113222",
+                "color": "#7ff0b2",
+                "border": "1px solid #2e8b57",
+            },
+        }
+    else:
+        alert_styles = {
+            "mixed": {
+                "backgroundColor": "#fff4e5",
+                "color": "#8a5a00",
+                "border": "1px solid #f0d9a7",
+            },
+            "offline": {
+                "backgroundColor": "#f2f2f2",
+                "color": "#555",
+                "border": "1px solid #d6d6d6",
+            },
+            "dry": {
+                "backgroundColor": "#ffeaea",
+                "color": "#a94442",
+                "border": "1px solid #ebccd1",
+            },
+            "ok": {
+                "backgroundColor": "#eef9ee",
+                "color": "#2f6b2f",
+                "border": "1px solid #cfe9cf",
+            },
+        }
 
     if offline_alerts and dry_alerts:
         alert_banner = html.Div(
@@ -559,9 +606,7 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
                 html.Div(f"Water alerts: {', '.join(dry_alerts)}", style={"marginTop": "6px"}),
             ],
             style={
-                "backgroundColor": "#fff4e5",
-                "color": "#8a5a00",
-                "border": "1px solid #f0d9a7",
+                **alert_styles["mixed"],
                 "padding": "14px 18px",
                 "borderRadius": "16px",
                 "marginBottom": "16px",
@@ -572,9 +617,7 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
         alert_banner = html.Div(
             f"Offline sensors: {', '.join(offline_alerts)}",
             style={
-                "backgroundColor": "#f2f2f2",
-                "color": "#555",
-                "border": "1px solid #d6d6d6",
+                **alert_styles["offline"],
                 "padding": "14px 18px",
                 "borderRadius": "16px",
                 "marginBottom": "16px",
@@ -585,9 +628,7 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
         alert_banner = html.Div(
             f"Water alert: {', '.join(dry_alerts)}",
             style={
-                "backgroundColor": "#ffeaea",
-                "color": "#a94442",
-                "border": "1px solid #ebccd1",
+                **alert_styles["dry"],
                 "padding": "14px 18px",
                 "borderRadius": "16px",
                 "marginBottom": "16px",
@@ -598,9 +639,7 @@ def update_cards(snapshot_data, history24_data, rules_dict, theme_data):
         alert_banner = html.Div(
             "No urgent watering alerts or offline sensors.",
             style={
-                "backgroundColor": "#eef9ee",
-                "color": "#2f6b2f",
-                "border": "1px solid #cfe9cf",
+                **alert_styles["ok"],
                 "padding": "14px 18px",
                 "borderRadius": "16px",
                 "marginBottom": "16px",
@@ -630,15 +669,18 @@ def toggle_live_range_visibility(tab):
     Input("history-24-store", "data"),
     Input("history-7-store", "data"),
     Input("history-30-store", "data"),
+    Input("snapshot-store", "data"),
     Input("plant-rules-store", "data"),
     Input("theme-store", "data"),
 )
-def render_tab(tab, live_range, h1, h6, h24, h7, h30, rules_dict, theme_data):
+def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict, theme_data):
     dark = bool((theme_data or {}).get("dark", False))
     styles = theme_styles(dark)
 
     if tab == "settings":
-        return build_settings_panel(rules_dict, dark=dark)
+        snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
+        used_fallback = snapshot_data.get("used_fallback", False)
+        return build_settings_panel(rules_dict, dark=dark, health_state_data=health_state, used_fallback=used_fallback)
 
     if tab == "live":
         live_hist = {
