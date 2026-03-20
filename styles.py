@@ -1,18 +1,20 @@
 def theme_styles(dark: bool):
     if dark:
         page_bg = "#0f1720"
-        panel_bg = "rgba(20,28,38,0.92)"
+        panel_bg = "rgba(20,28,38,0.94)"
         text = "#e6edf3"
         subtext = "#a7b4bf"
-        border = "rgba(255,255,255,0.08)"
+        border = "rgba(255,255,255,0.10)"
         chip_bg = "#18222d"
         plot_bg = "#111923"
         header_grad = "linear-gradient(135deg, #1f7a5d 0%, #265f84 100%)"
         input_bg = "#111923"
         input_text = "#e6edf3"
+        tab_bg = "#18222d"
+        tab_selected = "#245f8f"
     else:
         page_bg = "linear-gradient(180deg, #f5fbf7 0%, #eef4f8 100%)"
-        panel_bg = "rgba(255,255,255,0.80)"
+        panel_bg = "rgba(255,255,255,0.82)"
         text = "#1f2b24"
         subtext = "#5b6b63"
         border = "rgba(0,0,0,0.06)"
@@ -21,6 +23,8 @@ def theme_styles(dark: bool):
         header_grad = "linear-gradient(135deg, #2e7d5a 0%, #4e9c78 100%)"
         input_bg = "#ffffff"
         input_text = "#1f2b24"
+        tab_bg = "#f7faf8"
+        tab_selected = "#dcefe4"
 
     return {
         "page": {
@@ -79,6 +83,20 @@ def theme_styles(dark: bool):
             "marginRight": "10px",
             "marginBottom": "10px",
             "color": text,
+        },
+        "tab": {
+            "padding": "12px 16px",
+            "fontWeight": "600",
+            "backgroundColor": tab_bg,
+            "color": text,
+            "border": f"1px solid {border}",
+        },
+        "tab_selected": {
+            "padding": "12px 16px",
+            "fontWeight": "700",
+            "backgroundColor": tab_selected,
+            "color": text,
+            "border": f"1px solid {border}",
         },
         "subtext": subtext,
         "text": text,
