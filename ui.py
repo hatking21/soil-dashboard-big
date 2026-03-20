@@ -11,48 +11,58 @@ from data_layer import get_csv_last_write_time, get_csv_row_count, last_csv_stat
 from styles import theme_styles
 
 
+def moisture_status_key(moisture, rules, offline=False):
+    if offline:
+        return "offline"
+    if moisture is None:
+        return "nodata"
+    if moisture < rules["dry"]:
+        return "dry"
+    if moisture < rules["ideal_low"]:
+        return "check"
+    if moisture <= rules["ideal_high"]:
+        return "good"
+    return "wet"
+
+
 def moisture_colors(moisture, rules, dark=False, offline=False):
     styles = theme_styles(dark)
+    key = moisture_status_key(moisture, rules, offline=offline)
 
-    if offline:
-        return (
-            "Sensor offline",
-            styles["status_border"]["offline"],
-            styles["status_bg"]["offline"],
-        )
-
-    if moisture is None:
-        return (
-            "No data",
-            styles["status_border"]["nodata"],
-            styles["status_bg"]["nodata"],
-        )
-
-    if moisture < rules["dry"]:
-        return (
-            "Water now",
-            styles["status_border"]["dry"],
-            styles["status_bg"]["dry"],
-        )
-
-    if moisture < rules["ideal_low"]:
-        return (
-            "Check soon",
-            styles["status_border"]["check"],
-            styles["status_bg"]["check"],
-        )
-
-    if moisture <= rules["ideal_high"]:
-        return (
-            "Moisture looks good",
-            styles["status_border"]["good"],
-            styles["status_bg"]["good"],
-        )
+    label_map = {
+        "offline": "Sensor offline",
+        "nodata": "No data",
+        "dry": "Water now",
+        "check": "Check soon",
+        "good": "Moisture looks good",
+        "wet": "Wet / hold off",
+    }
 
     return (
-        "Wet / hold off",
-        styles["status_border"]["wet"],
-        styles["status_bg"]["wet"],
+        label_map[key],
+        styles["status_border"][key],
+        styles["status_bg"][key],
+    )
+
+
+def recommendation_pill(label, moisture, rules, dark=False, offline=False):
+    styles = theme_styles(dark)
+    key = moisture_status_key(moisture, rules, offline=offline)
+
+    return html.Div(
+        label,
+        style={
+            "display": "inline-block",
+            "padding": "10px 14px",
+            "borderRadius": "999px",
+            "backgroundColor": styles["status_pill_bg"][key],
+            "color": styles["status_pill_text"][key],
+            "fontWeight": "700",
+            "fontSize": "0.95rem",
+            "lineHeight": "1.1",
+            "border": f"1px solid {styles['status_border'][key]}",
+            "boxShadow": "0 2px 10px rgba(0,0,0,0.12)",
+        },
     )
 
 
