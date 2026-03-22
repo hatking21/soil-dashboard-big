@@ -14,10 +14,10 @@ WATERING_LOG_PATH = os.getenv("WATERING_LOG_PATH", "/opt/render/project/src/data
 ERROR_LOG_PATH = os.getenv("ERROR_LOG_PATH", "/opt/render/project/src/data/dashboard_errors.csv")
 CACHE_DIR = os.getenv("CACHE_DIR", "/opt/render/project/src/data/cache")
 
-CARD_REFRESH_MS = int(os.getenv("CARD_REFRESH_MS", "30000"))
+CARD_REFRESH_MS = int(os.getenv("CARD_REFRESH_MS", "300000"))
 
 HISTORY_FAST_REFRESH_MS = int(
-    os.getenv("HISTORY_FAST_REFRESH_MS_V2", os.getenv("HISTORY_FAST_REFRESH_MS", "180000"))
+    os.getenv("HISTORY_FAST_REFRESH_MS_V2", os.getenv("HISTORY_FAST_REFRESH_MS", "600000"))
 )
 HISTORY_7_REFRESH_MS = int(os.getenv("HISTORY_7_REFRESH_MS", "600000"))
 HISTORY_30_REFRESH_MS = int(os.getenv("HISTORY_30_REFRESH_MS", "1800000"))
