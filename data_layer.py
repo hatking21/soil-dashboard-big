@@ -45,9 +45,9 @@ health_state = {
 
 
 def make_session():
-    s = requests.Session()
-    s.headers.update(HEADERS)
-    return s
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    return session
 
 
 def ensure_parent_dir(path):
@@ -63,6 +63,7 @@ def ensure_cache_dir():
 def log_error(where, exc):
     ensure_parent_dir(ERROR_LOG_PATH)
     exists = os.path.exists(ERROR_LOG_PATH)
+
     with open(ERROR_LOG_PATH, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if not exists:
@@ -108,15 +109,17 @@ def ensure_csv_exists():
     if not os.path.exists(CSV_LOG_PATH):
         with open(CSV_LOG_PATH, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                "timestamp_utc",
-                "plant",
-                "moisture_pct",
-                "temp_f",
-                "raw",
-                "recommendation",
-                "sensor_offline",
-            ])
+            writer.writerow(
+                [
+                    "timestamp_utc",
+                    "plant",
+                    "moisture_pct",
+                    "temp_f",
+                    "raw",
+                    "recommendation",
+                    "sensor_offline",
+                ]
+            )
 
 
 def ensure_watering_log_exists():
@@ -129,6 +132,7 @@ def ensure_watering_log_exists():
 
 def prune_csv_file():
     global last_csv_prune_date
+
     if not os.path.exists(CSV_LOG_PATH):
         return
 
@@ -144,6 +148,7 @@ def prune_csv_file():
         fieldnames = reader.fieldnames
         if not fieldnames:
             return
+
         for row in reader:
             try:
                 ts = datetime.fromisoformat(row["timestamp_utc"])
@@ -162,22 +167,27 @@ def prune_csv_file():
 
 def log_to_csv(timestamp, plant, moisture, temp_f, raw, recommendation, sensor_offline):
     global last_csv_status
-    ensure_csv_exists()
 
+    ensure_csv_exists()
     try:
         with open(CSV_LOG_PATH, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                timestamp.isoformat(),
-                plant,
-                moisture,
-                temp_f,
-                raw,
-                recommendation,
-                sensor_offline,
-            ])
+            writer.writerow(
+                [
+                    timestamp.isoformat(),
+                    plant,
+                    moisture,
+                    temp_f,
+                    raw,
+                    recommendation,
+                    sensor_offline,
+                ]
+            )
+
         prune_csv_file()
-        last_csv_status = f"Last write OK: {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
+        last_csv_status = (
+            f"Last write OK: {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %I:%M:%S %p')}"
+        )
         health_state["csv_ok"] = True
     except Exception as e:
         last_csv_status = f"Last write failed: {e}"
@@ -192,6 +202,7 @@ def log_watering_event(timestamp, plant, moisture_before, moisture_after):
         with open(WATERING_LOG_PATH, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([timestamp.isoformat(), plant, moisture_before, moisture_after])
+
         health_state["watering_log_ok"] = True
     except Exception as e:
         health_state["watering_log_ok"] = False
@@ -207,14 +218,17 @@ def load_last_watered_from_csv():
             for row in reader:
                 plant = row.get("plant")
                 ts_text = row.get("timestamp_utc")
+
                 if not plant or not ts_text or plant not in last_watered_time:
                     continue
+
                 try:
                     ts = datetime.fromisoformat(ts_text)
                     if last_watered_time[plant] is None or ts > last_watered_time[plant]:
                         last_watered_time[plant] = ts
                 except Exception:
                     continue
+
         health_state["watering_log_ok"] = True
     except Exception as e:
         health_state["watering_log_ok"] = False
@@ -225,6 +239,7 @@ def load_last_watered_from_csv():
 def get_csv_row_count():
     if not os.path.exists(CSV_LOG_PATH):
         return 0
+
     try:
         with open(CSV_LOG_PATH, "r", newline="", encoding="utf-8") as f:
             return max(0, sum(1 for _ in f) - 1)
@@ -235,6 +250,7 @@ def get_csv_row_count():
 def get_csv_last_write_time():
     if not os.path.exists(CSV_LOG_PATH):
         return "Not created yet"
+
     try:
         ts = os.path.getmtime(CSV_LOG_PATH)
         dt_local = datetime.fromtimestamp(ts, tz=LOCAL_TZ)
@@ -255,12 +271,14 @@ def should_log_reading(plant, moisture):
         last_logged_time[plant] = now
         last_logged_moisture[plant] = moisture
         return True
+
     return False
 
 
 def is_sensor_offline(timestamp):
     if timestamp is None:
         return True
+
     age_s = (datetime.now(timezone.utc) - timestamp).total_seconds()
     return age_s > SENSOR_OFFLINE_MINUTES * 60
 
@@ -303,10 +321,12 @@ def fetch_latest_snapshot():
         for plant, meta in FEEDS.items():
             feed_key = meta["feed"]
             url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data/last"
+
             feed_data = _request_json(session, url, timeout=REQUEST_TIMEOUT_LAST)
 
             payload_text = feed_data.get("value")
             created_at = feed_data.get("created_at")
+
             if payload_text is None:
                 raise ValueError(f"Missing value for {plant}")
 
@@ -325,9 +345,12 @@ def fetch_latest_snapshot():
             }
 
         health_state["adafruit_ok"] = True
-        health_state["last_successful_fetch"] = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
+        health_state["last_successful_fetch"] = datetime.now(LOCAL_TZ).strftime(
+            "%Y-%m-%d %I:%M:%S %p"
+        )
         save_cache("snapshot", snapshot)
         return snapshot, False
+
     except Exception as e:
         health_state["adafruit_ok"] = False
         health_state["last_error"] = str(e)
@@ -344,22 +367,58 @@ def fetch_history(hours=24, cache_name="history"):
         for plant, meta in FEEDS.items():
             feed_key = meta["feed"]
             url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data"
-            entries = _request_json(
-                session,
-                url,
-                params={"limit": 1000},
-                timeout=REQUEST_TIMEOUT_HISTORY,
-            )
+
+            all_entries = []
+            page = 0
+            per_page = 1000
+
+            while True:
+                entries = _request_json(
+                    session,
+                    url,
+                    params={
+                        "limit": per_page,
+                        "page": page,
+                    },
+                    timeout=REQUEST_TIMEOUT_HISTORY,
+                )
+
+                if not entries:
+                    break
+
+                all_entries.extend(entries)
+
+                oldest_ts_in_page = None
+                for entry in entries:
+                    created_at = entry.get("created_at")
+                    if not created_at:
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                        if oldest_ts_in_page is None or ts < oldest_ts_in_page:
+                            oldest_ts_in_page = ts
+                    except Exception:
+                        continue
+
+                if len(entries) < per_page:
+                    break
+
+                if oldest_ts_in_page is not None and oldest_ts_in_page < cutoff:
+                    break
+
+                page += 1
 
             times = []
             moisture_vals = []
             temp_vals = []
 
-            for entry in reversed(entries):
+            for entry in reversed(all_entries):
                 created_at = entry.get("created_at")
                 value = entry.get("value")
+
                 if not created_at or value is None:
                     continue
+
                 try:
                     ts = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                     payload = json.loads(value)
@@ -367,6 +426,7 @@ def fetch_history(hours=24, cache_name="history"):
                     temp_f = min(float(payload.get("temp_f")), TEMP_F_MAX)
                 except Exception:
                     continue
+
                 if ts >= cutoff:
                     times.append(ts.isoformat())
                     moisture_vals.append(moisture)
@@ -380,6 +440,7 @@ def fetch_history(hours=24, cache_name="history"):
 
         save_cache(cache_name, histories)
         return histories, False
+
     except Exception as e:
         log_error(f"fetch_history_{hours}", e)
         return load_cache(cache_name, {}), True
@@ -388,6 +449,7 @@ def fetch_history(hours=24, cache_name="history"):
 def compute_trend_arrow(values):
     if len(values) < 3:
         return "→"
+
     recent = values[-1] - values[max(0, len(values) - 3)]
     if recent > 1.5:
         return "↑"
@@ -420,6 +482,7 @@ def estimate_hours_until_dry(times, moisture_values, dry_threshold):
 
     if slope >= -0.05:
         return None
+
     if current <= dry_threshold:
         return 0.0
 
@@ -429,8 +492,8 @@ def estimate_hours_until_dry(times, moisture_values, dry_threshold):
 
 def run_startup_checks():
     checks = []
-    checks.append(("AIO_USERNAME", bool(AIO_USERNAME := os.getenv("AIO_USERNAME"))))
-    checks.append(("AIO_KEY", bool(AIO_KEY := os.getenv("AIO_KEY"))))
+    checks.append(("AIO_USERNAME", bool(os.getenv("AIO_USERNAME"))))
+    checks.append(("AIO_KEY", bool(os.getenv("AIO_KEY"))))
     checks.append(("CSV path writable", True))
     checks.append(("Watering log writable", True))
     checks.append(("ntfy configured", bool(os.getenv("NTFY_TOPIC"))))
