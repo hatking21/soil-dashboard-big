@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from dash import Dash, Input, Output, State, ALL, dcc, html, no_update, ctx
+from dash.exceptions import PreventUpdate
 from flask import send_file
 
 from charts import build_figures
@@ -183,7 +184,7 @@ def fallback_build_health_panel(health_state_data, used_fallback, dark=True, sho
         children.append(
             html.Div(
                 f"Last successful fetch: {health_state_data.get('last_successful_fetch', 'Never')}",
-                style={"marginTop": "10px", "color": styles.get('subtext', '#9ca3af')},
+                style={"marginTop": "10px", "color": styles.get("subtext", "#9ca3af")},
             )
         )
         if health_state_data.get("last_error"):
@@ -592,8 +593,8 @@ app.layout = html.Div(
         dcc.Store(id="history-30-store"),
         dcc.Interval(id="card-refresh", interval=CARD_REFRESH_MS, n_intervals=0),
         dcc.Interval(id="history-fast-refresh", interval=HISTORY_FAST_REFRESH_MS, n_intervals=0),
-        dcc.Interval(id="history-7-refresh", interval=HISTORY_7_REFRESH_MS, n_intervals=0),
-        dcc.Interval(id="history-30-refresh", interval=HISTORY_30_REFRESH_MS, n_intervals=0),
+        dcc.Interval(id="history-7-refresh", interval=HISTORY_7_REFRESH_MS, n_intervals=0, disabled=True),
+        dcc.Interval(id="history-30-refresh", interval=HISTORY_30_REFRESH_MS, n_intervals=0, disabled=True),
         html.Div(id="app-shell", children=build_shell(1)),
     ],
 )
@@ -602,6 +603,19 @@ app.layout = html.Div(
 @app.callback(Output("app-shell", "children"), Input("live-range-store", "data"))
 def render_shell(live_range):
     return build_shell(live_range or 1)
+
+
+@app.callback(
+    Output("history-7-refresh", "disabled"),
+    Output("history-30-refresh", "disabled"),
+    Input("view-tabs", "value"),
+)
+def control_slow_history_refresh(tab):
+    if tab == "weekly":
+        return False, True
+    if tab == "monthly":
+        return True, False
+    return True, True
 
 
 @app.callback(
@@ -639,14 +653,26 @@ def refresh_fast_history(n):
     )
 
 
-@app.callback(Output("history-7-store", "data"), Input("history-7-refresh", "n_intervals"))
-def refresh_7_history(n):
+@app.callback(
+    Output("history-7-store", "data"),
+    Input("history-7-refresh", "n_intervals"),
+    State("view-tabs", "value"),
+)
+def refresh_7_history(n, tab):
+    if tab != "weekly":
+        raise PreventUpdate
     h7, _ = fetch_history(hours=24 * 7, cache_name="history_7")
     return serialize_histories(h7, target_points=WEEKLY_TARGET_POINTS)
 
 
-@app.callback(Output("history-30-store", "data"), Input("history-30-refresh", "n_intervals"))
-def refresh_30_history(n):
+@app.callback(
+    Output("history-30-store", "data"),
+    Input("history-30-refresh", "n_intervals"),
+    State("view-tabs", "value"),
+)
+def refresh_30_history(n, tab):
+    if tab != "monthly":
+        raise PreventUpdate
     h30, _ = fetch_history(hours=24 * 30, cache_name="history_30")
     return serialize_histories(h30, target_points=MONTHLY_TARGET_POINTS)
 
