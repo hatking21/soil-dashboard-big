@@ -45,14 +45,7 @@ from notifications import (
     send_ntfy_alert,
 )
 from styles import theme_styles
-from ui import (
-    build_health_panel,
-    build_moisture_bar,
-    build_settings_panel,
-    make_card_shell,
-    moisture_colors,
-    recommendation_pill,
-)
+import ui as ui_module
 
 app = Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
@@ -76,6 +69,239 @@ init_notification_state(plant_names)
 run_startup_checks()
 
 
+# ---------- Safe UI fallbacks ----------
+
+def fallback_make_card_shell(plant, dark=True):
+    styles = theme_styles(dark)
+    return html.Div(
+        id=f"card-{plant}",
+        children="Loading...",
+        style={
+            "backgroundColor": styles.get("card_bg", "#111827"),
+            "border": f"1px solid {styles.get('border', '#374151')}",
+            "borderRadius": "18px",
+            "padding": "16px",
+            "minHeight": "275px",
+            "color": styles.get("text", "#f9fafb"),
+            "flex": "1 1 280px",
+        },
+    )
+
+
+def fallback_build_moisture_bar(moisture, color, dark=True):
+    styles = theme_styles(dark)
+    value = 0 if moisture is None else max(0, min(100, float(moisture)))
+    return html.Div(
+        [
+            html.Div(
+                style={
+                    "height": "10px",
+                    "width": f"{value}%",
+                    "backgroundColor": color,
+                    "borderRadius": "999px",
+                    "transition": "width 0.25s ease",
+                }
+            )
+        ],
+        style={
+            "height": "10px",
+            "width": "100%",
+            "backgroundColor": styles.get("border", "#374151"),
+            "borderRadius": "999px",
+            "overflow": "hidden",
+            "marginBottom": "12px",
+        },
+    )
+
+
+def fallback_moisture_colors(moisture, rule, dark=True, offline=False):
+    if offline or moisture is None:
+        if dark:
+            return "Offline", "#94a3b8", "#1f2937"
+        return "Offline", "#64748b", "#f1f5f9"
+
+    dry = rule["dry"]
+    low = rule["ideal_low"]
+    high = rule["ideal_high"]
+
+    if moisture <= dry:
+        return ("Water now", "#ef4444", "#3a1318") if dark else ("Water now", "#dc2626", "#fee2e2")
+    if moisture < low:
+        return ("Check soon", "#f59e0b", "#3a2814") if dark else ("Check soon", "#d97706", "#fef3c7")
+    if moisture <= high:
+        return ("Healthy", "#22c55e", "#113222") if dark else ("Healthy", "#16a34a", "#dcfce7")
+    return ("Wet", "#38bdf8", "#0f2533") if dark else ("Wet", "#0284c7", "#e0f2fe")
+
+
+def fallback_recommendation_pill(rec, moisture, rule, dark=True, offline=False):
+    _, color, bg = fallback_moisture_colors(moisture, rule, dark=dark, offline=offline)
+    return html.Div(
+        rec,
+        style={
+            "padding": "6px 10px",
+            "borderRadius": "999px",
+            "fontSize": "0.85rem",
+            "fontWeight": "700",
+            "border": f"1px solid {color}",
+            "backgroundColor": bg,
+            "color": color,
+            "whiteSpace": "nowrap",
+        },
+    )
+
+
+def fallback_build_health_panel(health_state_data, used_fallback, dark=True, show_details=False):
+    styles = theme_styles(dark)
+
+    def status_chip(label, ok):
+        return html.Div(
+            f"{label}: {'OK' if ok else 'Issue'}",
+            style={
+                "padding": "8px 10px",
+                "borderRadius": "999px",
+                "fontSize": "0.9rem",
+                "fontWeight": "600",
+                "backgroundColor": "#113222" if ok else "#3a1318",
+                "color": "#7ff0b2" if ok else "#ff9a9a",
+                "border": f"1px solid {'#2e8b57' if ok else '#a94442'}",
+            },
+        )
+
+    items = [
+        status_chip("Adafruit IO", bool(health_state_data.get("adafruit_ok"))),
+        status_chip("CSV logging", bool(health_state_data.get("csv_ok"))),
+        status_chip("Watering log", bool(health_state_data.get("watering_log_ok"))),
+        status_chip("Cache fallback", not used_fallback),
+    ]
+
+    children = [
+        html.Div("System health", style={"fontWeight": "700", "marginBottom": "10px"}),
+        html.Div(items, style={"display": "flex", "gap": "10px", "flexWrap": "wrap"}),
+    ]
+
+    if show_details:
+        children.append(
+            html.Div(
+                f"Last successful fetch: {health_state_data.get('last_successful_fetch', 'Never')}",
+                style={"marginTop": "10px", "color": styles.get('subtext', '#9ca3af')},
+            )
+        )
+        if health_state_data.get("last_error"):
+            children.append(
+                html.Div(
+                    f"Last error: {health_state_data.get('last_error')}",
+                    style={"marginTop": "6px", "color": "#ff9a9a"},
+                )
+            )
+
+    return html.Div(children, style={**styles["section"], "marginBottom": "16px"})
+
+
+def fallback_build_settings_panel(rules_dict, dark=True, health_state_data=None, used_fallback=False):
+    styles = theme_styles(dark)
+    rows = []
+
+    for plant in plant_names:
+        rule = rules_dict.get(plant, DEFAULT_PLANT_RULES[plant])
+        rows.append(
+            html.Div(
+                [
+                    html.Div(plant, style={"fontWeight": "700", "minWidth": "160px"}),
+                    dcc.Input(
+                        id={"type": "dry-input", "plant": plant},
+                        type="number",
+                        value=rule["dry"],
+                        min=0,
+                        max=100,
+                        step=1,
+                        style={"width": "90px"},
+                    ),
+                    dcc.Input(
+                        id={"type": "ideal-low-input", "plant": plant},
+                        type="number",
+                        value=rule["ideal_low"],
+                        min=0,
+                        max=100,
+                        step=1,
+                        style={"width": "90px"},
+                    ),
+                    dcc.Input(
+                        id={"type": "ideal-high-input", "plant": plant},
+                        type="number",
+                        value=rule["ideal_high"],
+                        min=0,
+                        max=100,
+                        step=1,
+                        style={"width": "90px"},
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "gap": "10px",
+                    "alignItems": "center",
+                    "flexWrap": "wrap",
+                    "marginBottom": "10px",
+                },
+            )
+        )
+
+    return html.Div(
+        [
+            html.Div(
+                "Plant rules",
+                style={"fontWeight": "700", "marginBottom": "12px", "fontSize": "1.05rem"},
+            ),
+            html.Div(
+                [
+                    html.Div("Plant", style={"fontWeight": "600", "minWidth": "160px"}),
+                    html.Div("Dry", style={"fontWeight": "600", "width": "90px"}),
+                    html.Div("Ideal low", style={"fontWeight": "600", "width": "90px"}),
+                    html.Div("Ideal high", style={"fontWeight": "600", "width": "90px"}),
+                ],
+                style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "8px"},
+            ),
+            *rows,
+            html.Div(
+                [
+                    html.Button("Save rules", id="save-rules-button", n_clicks=0, style={"marginRight": "10px"}),
+                    html.Span(id="save-rules-status"),
+                ],
+                style={"marginTop": "12px", "marginBottom": "16px"},
+            ),
+            html.Div(
+                [
+                    html.Button("Send ntfy test", id="ntfy-test-button", n_clicks=0, style={"marginRight": "10px"}),
+                    html.Span(id="ntfy-test-status"),
+                ],
+                style={"marginBottom": "16px"},
+            ),
+            html.Div(
+                [
+                    html.A("Download CSV", href="/download-csv", target="_blank"),
+                ],
+                style={"marginBottom": "16px"},
+            ),
+            fallback_build_health_panel(
+                health_state_data or health_state,
+                used_fallback,
+                dark=dark,
+                show_details=True,
+            ),
+        ],
+        style=styles["section"],
+    )
+
+
+make_card_shell = getattr(ui_module, "make_card_shell", fallback_make_card_shell)
+build_moisture_bar = getattr(ui_module, "build_moisture_bar", fallback_build_moisture_bar)
+build_settings_panel = getattr(ui_module, "build_settings_panel", fallback_build_settings_panel)
+build_health_panel = getattr(ui_module, "build_health_panel", fallback_build_health_panel)
+moisture_colors = getattr(ui_module, "moisture_colors", fallback_moisture_colors)
+recommendation_pill = getattr(ui_module, "recommendation_pill", fallback_recommendation_pill)
+
+
+# ---------- Helpers ----------
+
 def min_max_bucket_downsample(times, moisture, temp, target_points=300):
     n = len(times)
     if n <= target_points or n == 0:
@@ -83,7 +309,6 @@ def min_max_bucket_downsample(times, moisture, temp, target_points=300):
 
     bucket_count = max(1, target_points // 2)
     bucket_size = max(1, n // bucket_count)
-
     keep_indices = set()
 
     for start in range(0, n, bucket_size):
@@ -97,7 +322,6 @@ def min_max_bucket_downsample(times, moisture, temp, target_points=300):
 
         local_min_idx = start + bucket_m.index(min(bucket_m))
         local_max_idx = start + bucket_m.index(max(bucket_m))
-
         keep_indices.add(local_min_idx)
         keep_indices.add(local_max_idx)
 
@@ -123,10 +347,7 @@ def downsample_history_dict(histories, target_points=None):
         temp = row.get("temp", [])
 
         ds_times, ds_moisture, ds_temp = min_max_bucket_downsample(
-            times,
-            moisture,
-            temp,
-            target_points=target_points,
+            times, moisture, temp, target_points=target_points
         )
 
         out[plant] = {
@@ -140,8 +361,8 @@ def downsample_history_dict(histories, target_points=None):
 
 def serialize_histories(histories, target_points=None):
     histories = downsample_history_dict(histories, target_points=target_points)
-
     out = {}
+
     for plant, row in histories.items():
         out[plant] = {
             "times": row.get("times", []),
@@ -188,15 +409,14 @@ def format_reading_age(ts):
     age_hours = age_minutes // 60
     rem_minutes = age_minutes % 60
     if age_hours < 24:
-        if rem_minutes == 0:
-            return f"Reading age: {age_hours} hr ago"
-        return f"Reading age: {age_hours} hr {rem_minutes} min ago"
+        return f"Reading age: {age_hours} hr ago" if rem_minutes == 0 else f"Reading age: {age_hours} hr {rem_minutes} min ago"
 
     age_days = age_hours // 24
     rem_hours = age_hours % 24
-    if rem_hours == 0:
-        return f"Reading age: {age_days} day ago" if age_days == 1 else f"Reading age: {age_days} days ago"
-    return f"Reading age: {age_days} day {rem_hours} hr ago" if age_days == 1 else f"Reading age: {age_days} days {rem_hours} hr ago"
+    return f"Reading age: {age_days} day ago" if rem_hours == 0 and age_days == 1 else (
+        f"Reading age: {age_days} days ago" if rem_hours == 0 else
+        (f"Reading age: {age_days} day {rem_hours} hr ago" if age_days == 1 else f"Reading age: {age_days} days {rem_hours} hr ago")
+    )
 
 
 def filter_histories_by_selection(histories, selected_plants):
@@ -242,31 +462,22 @@ def build_summary_cards(histories, selected_plants, dark=True):
                     html.Div(f"Temp min/max: {summary['t_min']:.1f}°F / {summary['t_max']:.1f}°F"),
                 ],
                 style={
-                    "backgroundColor": styles["card_bg"],
-                    "border": f"1px solid {styles['border']}",
+                    "backgroundColor": styles.get("card_bg", "#111827"),
+                    "border": f"1px solid {styles.get('border', '#374151')}",
                     "borderRadius": "16px",
                     "padding": "14px",
                     "minWidth": "220px",
                     "flex": "1 1 220px",
-                    "boxShadow": styles.get("card_shadow", "none"),
                 },
             )
         )
 
     if not cards:
-        return html.Div(
-            "No summary data available for the selected plants.",
-            style=styles["section"],
-        )
+        return html.Div("No summary data available for the selected plants.", style=styles["section"])
 
     return html.Div(
         cards,
-        style={
-            "display": "flex",
-            "flexWrap": "wrap",
-            "gap": "12px",
-            "marginBottom": "16px",
-        },
+        style={"display": "flex", "flexWrap": "wrap", "gap": "12px", "marginBottom": "16px"},
     )
 
 
@@ -290,7 +501,7 @@ def build_graph_controls(selected_plants, dark=True):
             ),
             html.Div(
                 "Tip: hide plants here to make weekly and monthly trends easier to read.",
-                style={"marginTop": "8px", "fontSize": "0.92rem", "color": styles["subtext"]},
+                style={"marginTop": "8px", "fontSize": "0.92rem", "color": styles.get("subtext", "#9ca3af")},
             ),
         ],
         style={**styles["section"], "marginBottom": "16px"},
@@ -322,10 +533,7 @@ def build_shell(live_range=1):
                         children=[
                             html.Div(
                                 [
-                                    html.H1(
-                                        "Plant Soil Monitor",
-                                        style={"margin": "0 0 8px 0", "fontSize": "2rem"},
-                                    ),
+                                    html.H1("Plant Soil Monitor", style={"margin": "0 0 8px 0", "fontSize": "2rem"}),
                                     html.P(
                                         "Track moisture, temperature, watering, alerts, and trends in one place.",
                                         style={"margin": "0", "opacity": "0.92"},
@@ -339,57 +547,25 @@ def build_shell(live_range=1):
                     html.Div(id="alert-banner"),
                     html.Div(
                         [make_card_shell(plant, dark=dark) for plant in plant_names],
-                        style={
-                            "display": "flex",
-                            "flexWrap": "wrap",
-                            "gap": "14px",
-                            "marginBottom": "18px",
-                        },
+                        style={"display": "flex", "flexWrap": "wrap", "gap": "14px", "marginBottom": "18px"},
                     ),
                     dcc.Tabs(
                         id="view-tabs",
                         value="live",
                         children=[
-                            dcc.Tab(
-                                label="Live",
-                                value="live",
-                                style=styles["tab"],
-                                selected_style=styles["tab_selected"],
-                            ),
-                            dcc.Tab(
-                                label="Weekly",
-                                value="weekly",
-                                style=styles["tab"],
-                                selected_style=styles["tab_selected"],
-                            ),
-                            dcc.Tab(
-                                label="Monthly",
-                                value="monthly",
-                                style=styles["tab"],
-                                selected_style=styles["tab_selected"],
-                            ),
-                            dcc.Tab(
-                                label="Settings",
-                                value="settings",
-                                style=styles["tab"],
-                                selected_style=styles["tab_selected"],
-                            ),
+                            dcc.Tab(label="Live", value="live", style=styles["tab"], selected_style=styles["tab_selected"]),
+                            dcc.Tab(label="Weekly", value="weekly", style=styles["tab"], selected_style=styles["tab_selected"]),
+                            dcc.Tab(label="Monthly", value="monthly", style=styles["tab"], selected_style=styles["tab_selected"]),
+                            dcc.Tab(label="Settings", value="settings", style=styles["tab"], selected_style=styles["tab_selected"]),
                         ],
                     ),
                     html.Div(
                         id="live-range-container",
                         style={"marginTop": "16px", "display": "block"},
                         children=[
+                            html.Div("Live range", style={"marginBottom": "8px", "fontWeight": "600"}),
                             html.Div(
-                                "Live range",
-                                style={"marginBottom": "8px", "fontWeight": "600"},
-                            ),
-                            html.Div(
-                                [
-                                    range_button("1 hour", 1),
-                                    range_button("6 hours", 6),
-                                    range_button("24 hours", 24),
-                                ],
+                                [range_button("1 hour", 1), range_button("6 hours", 6), range_button("24 hours", 24)],
                                 style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
                             ),
                         ],
@@ -423,13 +599,9 @@ app.layout = html.Div(
 )
 
 
-@app.callback(
-    Output("app-shell", "children"),
-    Input("live-range-store", "data"),
-)
+@app.callback(Output("app-shell", "children"), Input("live-range-store", "data"))
 def render_shell(live_range):
-    live_range = live_range or 1
-    return build_shell(live_range)
+    return build_shell(live_range or 1)
 
 
 @app.callback(
@@ -444,10 +616,7 @@ def update_selected_plants(selected, current):
     return selected
 
 
-@app.callback(
-    Output("snapshot-store", "data"),
-    Input("card-refresh", "n_intervals"),
-)
+@app.callback(Output("snapshot-store", "data"), Input("card-refresh", "n_intervals"))
 def refresh_snapshot(n):
     snapshot, used_fallback = fetch_latest_snapshot()
     return {"snapshot": snapshot, "used_fallback": used_fallback}
@@ -470,19 +639,13 @@ def refresh_fast_history(n):
     )
 
 
-@app.callback(
-    Output("history-7-store", "data"),
-    Input("history-7-refresh", "n_intervals"),
-)
+@app.callback(Output("history-7-store", "data"), Input("history-7-refresh", "n_intervals"))
 def refresh_7_history(n):
     h7, _ = fetch_history(hours=24 * 7, cache_name="history_7")
     return serialize_histories(h7, target_points=WEEKLY_TARGET_POINTS)
 
 
-@app.callback(
-    Output("history-30-store", "data"),
-    Input("history-30-refresh", "n_intervals"),
-)
+@app.callback(Output("history-30-store", "data"), Input("history-30-refresh", "n_intervals"))
 def refresh_30_history(n):
     h30, _ = fetch_history(hours=24 * 30, cache_name="history_30")
     return serialize_histories(h30, target_points=MONTHLY_TARGET_POINTS)
@@ -511,11 +674,7 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
         if not (0 <= dry <= low <= high <= 100):
             return no_update, f"Invalid values for {plant}. Must satisfy dry ≤ ideal low ≤ ideal high."
 
-        new_rules[plant] = {
-            "dry": dry,
-            "ideal_low": low,
-            "ideal_high": high,
-        }
+        new_rules[plant] = {"dry": dry, "ideal_low": low, "ideal_high": high}
 
     init_notification_state(plant_names)
     return new_rules, "Rules saved."
@@ -537,11 +696,7 @@ def send_test_notification(n_clicks):
 
 @app.callback(
     [Output(f"card-{plant}", "children") for plant in plant_names]
-    + [
-        Output("system-status", "children"),
-        Output("health-panel", "children"),
-        Output("alert-banner", "children"),
-    ],
+    + [Output("system-status", "children"), Output("health-panel", "children"), Output("alert-banner", "children")],
     Input("snapshot-store", "data"),
     Input("history-24-store", "data"),
     Input("plant-rules-store", "data"),
@@ -577,9 +732,7 @@ def update_cards(snapshot_data, history24_data, rules_dict):
 
             rec, rec_color, bg_color = moisture_colors(moisture, rules_dict[plant], dark=dark)
             if offline:
-                rec, rec_color, bg_color = moisture_colors(
-                    None, rules_dict[plant], dark=dark, offline=True
-                )
+                rec, rec_color, bg_color = moisture_colors(None, rules_dict[plant], dark=dark, offline=True)
 
             latest_snapshot[plant] = {
                 "moisture": moisture,
@@ -631,42 +784,29 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                     html.Div(
                         [
                             html.H3(title, style={"margin": "0", "fontSize": "1.1rem"}),
-                            recommendation_pill(
-                                rec, moisture, rules_dict[plant], dark=dark, offline=offline
-                            ),
+                            recommendation_pill(rec, moisture, rules_dict[plant], dark=dark, offline=offline),
                         ],
                         style={
                             "display": "flex",
                             "justifyContent": "space-between",
                             "alignItems": "center",
                             "marginBottom": "14px",
+                            "gap": "10px",
                         },
                     ),
                     html.Div(
                         [
                             html.Div(
                                 [
-                                    html.Div(
-                                        " Moisture",
-                                        style={"color": styles["subtext"], "fontSize": "0.85rem"},
-                                    ),
-                                    html.Div(
-                                        f"{moisture:.1f}% {trend}",
-                                        style={"fontSize": "1.25rem", "fontWeight": "700"},
-                                    ),
+                                    html.Div(" Moisture", style={"color": styles["subtext"], "fontSize": "0.85rem"}),
+                                    html.Div(f"{moisture:.1f}% {trend}", style={"fontSize": "1.25rem", "fontWeight": "700"}),
                                 ],
                                 style={"flex": "1"},
                             ),
                             html.Div(
                                 [
-                                    html.Div(
-                                        " Temp",
-                                        style={"color": styles["subtext"], "fontSize": "0.85rem"},
-                                    ),
-                                    html.Div(
-                                        f"{min(temp_f, TEMP_F_MAX):.1f}°F",
-                                        style={"fontSize": "1.25rem", "fontWeight": "700"},
-                                    ),
+                                    html.Div(" Temp", style={"color": styles["subtext"], "fontSize": "0.85rem"}),
+                                    html.Div(f"{min(temp_f, TEMP_F_MAX):.1f}°F", style={"fontSize": "1.25rem", "fontWeight": "700"}),
                                 ],
                                 style={"flex": "1"},
                             ),
@@ -674,16 +814,10 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                         style={"display": "flex", "gap": "12px", "marginBottom": "12px"},
                     ),
                     build_moisture_bar(moisture, rec_color, dark=dark),
-                    html.Div(
-                        format_last_watered(plant),
-                        style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"},
-                    ),
+                    html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
                     html.Div(eta_text, style={"marginBottom": "8px", "fontSize": "0.92rem"}),
                     html.Div(reading_age, style={"marginBottom": "8px", "fontSize": "0.92rem"}),
-                    html.Div(
-                        f"Last update: {last_update}",
-                        style={"fontSize": "0.92rem", "color": styles["subtext"]},
-                    ),
+                    html.Div(f"Last update: {last_update}", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
                 ],
                 style={
                     "backgroundColor": bg_color,
@@ -695,36 +829,17 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                 },
             )
 
-            rank = 0
-            if offline:
-                rank = -2
-            elif rec == "Water now":
-                rank = -1
-
+            rank = -2 if offline else (-1 if rec == "Water now" else 0)
             sort_moisture = moisture if moisture is not None else 999
             order_rank.append((rank, sort_moisture, plant, card))
-
         else:
             card = html.Div(
                 [
                     html.H3(f"{meta['emoji']} {plant}", style={"marginTop": "0"}),
-                    html.Div(
-                        "No data",
-                        style={
-                            "fontWeight": "700",
-                            "color": styles["subtext"],
-                            "marginBottom": "10px",
-                        },
-                    ),
-                    html.Div(
-                        format_last_watered(plant),
-                        style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"},
-                    ),
+                    html.Div("No data", style={"fontWeight": "700", "color": styles["subtext"], "marginBottom": "10px"}),
+                    html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
                     html.Div("Reading age: unavailable", style={"marginBottom": "8px", "fontSize": "0.92rem"}),
-                    html.Div(
-                        "Last update: --",
-                        style={"fontSize": "0.92rem", "color": styles["subtext"]},
-                    ),
+                    html.Div("Last update: --", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
                 ],
                 style={
                     "backgroundColor": styles["status_bg"]["nodata"],
@@ -738,12 +853,7 @@ def update_cards(snapshot_data, history24_data, rules_dict):
 
             order_rank.append((-3, 999, plant, card))
             offline_alerts.append(plant)
-            latest_snapshot[plant] = {
-                "moisture": None,
-                "temp_f": None,
-                "recommendation": "No data",
-                "offline": True,
-            }
+            latest_snapshot[plant] = {"moisture": None, "temp_f": None, "recommendation": "No data", "offline": True}
 
     maybe_send_daily_summary(latest_snapshot)
 
@@ -751,7 +861,6 @@ def update_cards(snapshot_data, history24_data, rules_dict):
     cards = [[item[3]] for item in order_rank]
 
     refresh_text = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
-
     system_status = html.Div(
         [
             html.Div(f"Last refresh: {refresh_text}", style=styles["chip"]),
@@ -765,99 +874,32 @@ def update_cards(snapshot_data, history24_data, rules_dict):
 
     health_panel = build_health_panel(health_state, used_fallback, dark=dark, show_details=False)
 
-    if dark:
-        alert_styles = {
-            "mixed": {
-                "backgroundColor": "#3a2814",
-                "color": "#ffd089",
-                "border": "1px solid #7a5b22",
-            },
-            "offline": {
-                "backgroundColor": "#1d2633",
-                "color": "#c2ccd8",
-                "border": "1px solid #5f738a",
-            },
-            "dry": {
-                "backgroundColor": "#3a1318",
-                "color": "#ff9a9a",
-                "border": "1px solid #a94442",
-            },
-            "ok": {
-                "backgroundColor": "#113222",
-                "color": "#7ff0b2",
-                "border": "1px solid #2e8b57",
-            },
-        }
-    else:
-        alert_styles = {
-            "mixed": {
-                "backgroundColor": "#fff4e5",
-                "color": "#8a5a00",
-                "border": "1px solid #f0d9a7",
-            },
-            "offline": {
-                "backgroundColor": "#f2f2f2",
-                "color": "#555",
-                "border": "1px solid #d6d6d6",
-            },
-            "dry": {
-                "backgroundColor": "#ffeaea",
-                "color": "#a94442",
-                "border": "1px solid #ebccd1",
-            },
-            "ok": {
-                "backgroundColor": "#eef9ee",
-                "color": "#2f6b2f",
-                "border": "1px solid #cfe9cf",
-            },
-        }
+    alert_styles = {
+        "mixed": {"backgroundColor": "#3a2814", "color": "#ffd089", "border": "1px solid #7a5b22"},
+        "offline": {"backgroundColor": "#1d2633", "color": "#c2ccd8", "border": "1px solid #5f738a"},
+        "dry": {"backgroundColor": "#3a1318", "color": "#ff9a9a", "border": "1px solid #a94442"},
+        "ok": {"backgroundColor": "#113222", "color": "#7ff0b2", "border": "1px solid #2e8b57"},
+    }
 
     if offline_alerts and dry_alerts:
         alert_banner = html.Div(
-            [
-                html.Div(f"Offline sensors: {', '.join(offline_alerts)}"),
-                html.Div(f"Water alerts: {', '.join(dry_alerts)}", style={"marginTop": "6px"}),
-            ],
-            style={
-                **alert_styles["mixed"],
-                "padding": "14px 18px",
-                "borderRadius": "16px",
-                "marginBottom": "16px",
-                "fontWeight": "700",
-            },
+            [html.Div(f"Offline sensors: {', '.join(offline_alerts)}"), html.Div(f"Water alerts: {', '.join(dry_alerts)}", style={"marginTop": "6px"})],
+            style={**alert_styles["mixed"], "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
         )
     elif offline_alerts:
         alert_banner = html.Div(
             f"Offline sensors: {', '.join(offline_alerts)}",
-            style={
-                **alert_styles["offline"],
-                "padding": "14px 18px",
-                "borderRadius": "16px",
-                "marginBottom": "16px",
-                "fontWeight": "700",
-            },
+            style={**alert_styles["offline"], "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
         )
     elif dry_alerts:
         alert_banner = html.Div(
             f"Water alert: {', '.join(dry_alerts)}",
-            style={
-                **alert_styles["dry"],
-                "padding": "14px 18px",
-                "borderRadius": "16px",
-                "marginBottom": "16px",
-                "fontWeight": "700",
-            },
+            style={**alert_styles["dry"], "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
         )
     else:
         alert_banner = html.Div(
             "No urgent watering alerts or offline sensors.",
-            style={
-                **alert_styles["ok"],
-                "padding": "14px 18px",
-                "borderRadius": "16px",
-                "marginBottom": "16px",
-                "fontWeight": "700",
-            },
+            style={**alert_styles["ok"], "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"},
         )
 
     return cards + [system_status, health_panel, alert_banner]
@@ -876,14 +918,9 @@ def set_live_range(_, current_value):
     return current_value or 1
 
 
-@app.callback(
-    Output("live-range-container", "style"),
-    Input("view-tabs", "value"),
-)
+@app.callback(Output("live-range-container", "style"), Input("view-tabs", "value"))
 def toggle_live_range_visibility(tab):
-    if tab == "live":
-        return {"marginTop": "16px", "display": "block"}
-    return {"display": "none"}
+    return {"marginTop": "16px", "display": "block"} if tab == "live" else {"display": "none"}
 
 
 @app.callback(
@@ -907,12 +944,7 @@ def render_tab(tab, live_range, selected_plants, h1, h6, h24, h7, h30, snapshot_
     if tab == "settings":
         snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
         used_fallback = snapshot_data.get("used_fallback", False)
-        return build_settings_panel(
-            rules_dict,
-            dark=dark,
-            health_state_data=health_state,
-            used_fallback=used_fallback,
-        )
+        return build_settings_panel(rules_dict, dark=dark, health_state_data=health_state, used_fallback=used_fallback)
 
     if tab == "live":
         live_hist = {
@@ -922,69 +954,40 @@ def render_tab(tab, live_range, selected_plants, h1, h6, h24, h7, h30, snapshot_
         }.get(live_range, deserialize_histories(h1))
 
         filtered_hist = filter_histories_by_selection(live_hist, selected_plants)
-        moisture_fig, temp_fig = build_figures(
-            filtered_hist,
-            rules_dict,
-            label_suffix=f"Live ({live_range}h)",
-            dark=dark,
-            temp_max=TEMP_F_MAX,
-        )
+        moisture_fig, temp_fig = build_figures(filtered_hist, rules_dict, label_suffix=f"Live ({live_range}h)", dark=dark, temp_max=TEMP_F_MAX)
 
         return html.Div(
             [
                 build_graph_controls(selected_plants, dark=dark),
                 html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
-                html.Div(
-                    dcc.Graph(figure=temp_fig),
-                    style={**styles["section"], "marginTop": "16px"},
-                ),
+                html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"}),
             ]
         )
 
     if tab == "weekly":
         weekly_hist = deserialize_histories(h7)
         filtered_hist = filter_histories_by_selection(weekly_hist, selected_plants)
-
-        moisture_fig, temp_fig = build_figures(
-            filtered_hist,
-            rules_dict,
-            label_suffix="Weekly",
-            dark=dark,
-            temp_max=TEMP_F_MAX,
-        )
+        moisture_fig, temp_fig = build_figures(filtered_hist, rules_dict, label_suffix="Weekly", dark=dark, temp_max=TEMP_F_MAX)
 
         return html.Div(
             [
                 build_graph_controls(selected_plants, dark=dark),
                 build_summary_cards(filtered_hist, selected_plants, dark=dark),
                 html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
-                html.Div(
-                    dcc.Graph(figure=temp_fig),
-                    style={**styles["section"], "marginTop": "16px"},
-                ),
+                html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"}),
             ]
         )
 
     monthly_hist = deserialize_histories(h30)
     filtered_hist = filter_histories_by_selection(monthly_hist, selected_plants)
-
-    moisture_fig, temp_fig = build_figures(
-        filtered_hist,
-        rules_dict,
-        label_suffix="Monthly",
-        dark=dark,
-        temp_max=TEMP_F_MAX,
-    )
+    moisture_fig, temp_fig = build_figures(filtered_hist, rules_dict, label_suffix="Monthly", dark=dark, temp_max=TEMP_F_MAX)
 
     return html.Div(
         [
             build_graph_controls(selected_plants, dark=dark),
             build_summary_cards(filtered_hist, selected_plants, dark=dark),
             html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
-            html.Div(
-                dcc.Graph(figure=temp_fig),
-                style={**styles["section"], "marginTop": "16px"},
-            ),
+            html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"}),
         ]
     )
 
