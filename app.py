@@ -76,15 +76,10 @@ def fallback_make_card_shell(plant, dark=True):
         id=f"card-{plant}",
         children="Loading...",
         style={
-            "backgroundColor": styles.get("card_bg", "#111827"),
-            "border": f"1px solid {styles.get('border', '#374151')}",
-            "borderRadius": "18px",
-            "padding": "16px",
-            "minHeight": "275px",
-            "color": styles.get("text", "#f9fafb"),
-            "flex": "0 1 320px",
-            "width": "320px",
-            "maxWidth": "100%",
+            **styles.get("card_shell", {}),
+            "width": "272px",
+            "minWidth": "272px",
+            "maxWidth": "272px",
             "boxSizing": "border-box",
         },
     )
@@ -108,7 +103,7 @@ def fallback_build_moisture_bar(moisture, color, dark=True):
         style={
             "height": "10px",
             "width": "100%",
-            "backgroundColor": styles.get("border", "#374151"),
+            "backgroundColor": styles.get("bar_track", "#24354d"),
             "borderRadius": "999px",
             "overflow": "hidden",
             "marginBottom": "12px",
@@ -340,12 +335,11 @@ def format_reading_age(ts):
 
 
 def normalize_selected_plants(selected_plants, histories=None):
-    valid = set(plant_names)
-    cleaned = [p for p in (selected_plants or []) if p in valid]
+    cleaned = [p for p in (selected_plants or []) if p in plant_names]
     if cleaned:
         return cleaned
     if histories:
-        available = [p for p in plant_names if p in histories and histories[p].get("times")]
+        available = [p for p in plant_names if p in histories]
         if available:
             return available
     return plant_names.copy()
@@ -397,7 +391,7 @@ def build_summary_cards(histories, selected_plants, dark=True):
                     "borderRadius": "16px",
                     "padding": "14px",
                     "minWidth": "220px",
-                    "flex": "1 1 220px",
+                    "flex": "0 1 240px",
                 },
             )
         )
@@ -405,7 +399,16 @@ def build_summary_cards(histories, selected_plants, dark=True):
     if not cards:
         return html.Div()
 
-    return html.Div(cards, style={"display": "flex", "flexWrap": "wrap", "gap": "12px", "marginBottom": "16px"})
+    return html.Div(
+        cards,
+        style={
+            "display": "flex",
+            "flexWrap": "wrap",
+            "gap": "12px",
+            "marginBottom": "16px",
+            "justifyContent": "center",
+        },
+    )
 
 
 def build_graph_controls(selected_plants, dark=True):
@@ -472,6 +475,7 @@ def build_shell(live_range=1):
                             "flexWrap": "wrap",
                             "gap": "14px",
                             "marginBottom": "18px",
+                            "justifyContent": "center",
                             "alignItems": "stretch",
                         },
                     ),
