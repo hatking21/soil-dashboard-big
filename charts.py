@@ -25,15 +25,6 @@ def get_axis_range(values, pad=5, min_floor=0, max_cap=None):
     return [low, high]
 
 
-def add_ideal_band(fig, ideal_low, ideal_high):
-    fig.add_hrect(
-        y0=ideal_low,
-        y1=ideal_high,
-        fillcolor="rgba(46,139,87,0.10)",
-        line_width=0,
-    )
-
-
 def style_figure(fig, title, yaxis_title, yaxis_range=None):
     styles = theme_styles(True)
     fig.update_layout(
@@ -58,50 +49,93 @@ def style_figure(fig, title, yaxis_title, yaxis_range=None):
     return fig
 
 
+def add_moisture_guides(fig, plant, rules, color):
+    guide_specs = [
+        (rules["dry"], "dot", f"{plant} dry"),
+        (rules["ideal_low"], "dash", f"{plant} ideal low"),
+        (rules["ideal_high"], "dash", f"{plant} ideal high"),
+    ]
+
+    for y_value, dash, name in guide_specs:
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                name=name,
+                line={"dash": dash, "width": 2, "color": color},
+                hoverinfo="skip",
+                visible="legendonly",
+                legendgroup=plant,
+            )
+        )
+        fig.add_hline(
+            y=y_value,
+            line_width=1,
+            line_dash=dash,
+            line_color=color,
+            opacity=0.22,
+        )
+
+
 def build_figures(histories, rules_dict, label_suffix="", dark=True, temp_max=120.0):
     moisture_fig = go.Figure()
     temp_fig = go.Figure()
     all_moisture = []
     all_temp = []
-    band_added = False
 
     for plant, hist in histories.items():
         times = hist.get("times", [])
         moisture = hist.get("moisture", [])
         temp = hist.get("temp", [])
 
-        if times:
-            moisture_fig.add_trace(
-                go.Scatter(
-                    x=times,
-                    y=moisture,
-                    mode="lines",
-                    name=plant,
-                    line={"shape": "spline", "smoothing": MOISTURE_SMOOTHING},
-                    connectgaps=True,
-                )
-            )
-            temp_fig.add_trace(
-                go.Scatter(
-                    x=times,
-                    y=temp,
-                    mode="lines",
-                    name=plant,
-                    line={"shape": "spline", "smoothing": TEMP_SMOOTHING},
-                    connectgaps=True,
-                )
-            )
+        if not times:
+            continue
 
-            all_moisture.extend(moisture)
-            all_temp.extend(temp)
+        rules = rules_dict.get(plant, {"dry": 20, "ideal_low": 35, "ideal_high": 80})
 
-            if not band_added and plant in rules_dict:
-                add_ideal_band(
-                    moisture_fig,
-                    rules_dict[plant]["ideal_low"],
-                    rules_dict[plant]["ideal_high"],
-                )
-                band_added = True
+        moisture_fig.add_trace(
+            go.Scatter(
+                x=times,
+                y=moisture,
+                mode="lines",
+                name=plant,
+                line={"shape": "spline", "smoothing": MOISTURE_SMOOTHING},
+                connectgaps=True,
+                legendgroup=plant,
+                hovertemplate=(
+                    "<b>%{fullData.name}</b><br>"
+                    "Time: %{x}<br>"
+                    "Moisture: %{y:.1f}%<br>"
+                    f"Dry below: {rules['dry']:.0f}%<br>"
+                    f"Ideal: {rules['ideal_low']:.0f}%–{rules['ideal_high']:.0f}%"
+                    "<extra></extra>"
+                ),
+            )
+        )
+        color = moisture_fig.data[-1].line.color
+        add_moisture_guides(moisture_fig, plant, rules, color)
+
+        temp_fig.add_trace(
+            go.Scatter(
+                x=times,
+                y=temp,
+                mode="lines",
+                name=plant,
+                line={"shape": "spline", "smoothing": TEMP_SMOOTHING},
+                connectgaps=True,
+                legendgroup=plant,
+                hovertemplate=(
+                    "<b>%{fullData.name}</b><br>"
+                    "Time: %{x}<br>"
+                    "Temperature: %{y:.1f}°F"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+        all_moisture.extend(moisture)
+        all_temp.extend(temp)
 
     moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
     temp_range = get_axis_range(all_temp, pad=4, min_floor=0, max_cap=temp_max)
