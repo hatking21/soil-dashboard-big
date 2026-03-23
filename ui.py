@@ -1,290 +1,156 @@
-from dash import dcc, html
+import plotly.graph_objects as go
 
-from config import (
-    CSV_RETENTION_DAYS,
-    FEEDS,
-    SENSOR_OFFLINE_MINUTES,
-    TEMP_F_MAX,
-    WATERING_JUMP_THRESHOLD,
-)
-from data_layer import get_csv_last_write_time, get_csv_row_count, last_csv_status
 from styles import theme_styles
 
 
-DARK = True
+MOISTURE_SMOOTHING = 0.45
+TEMP_SMOOTHING = 1.0
 
 
-def moisture_status_key(moisture, rules, offline=False):
-    if offline:
-        return "offline"
-    if moisture is None:
-        return "nodata"
-    if moisture < rules["dry"]:
-        return "dry"
-    if moisture < rules["ideal_low"]:
-        return "check"
-    if moisture <= rules["ideal_high"]:
-        return "good"
-    return "wet"
+def get_axis_range(values, pad=5, min_floor=0, max_cap=None):
+    if not values:
+        return None
+
+    vmin = min(values)
+    vmax = max(values)
+    low = max(min_floor, vmin - pad)
+    high = vmax + pad
+
+    if max_cap is not None:
+        high = min(max_cap, high)
+
+    if high <= low:
+        high = low + 1
+
+    return [low, high]
 
 
-def moisture_colors(moisture, rules, dark=True, offline=False):
+def style_figure(fig, title, yaxis_title, yaxis_range=None):
     styles = theme_styles(True)
-    key = moisture_status_key(moisture, rules, offline=offline)
-
-    label_map = {
-        "offline": "Sensor offline",
-        "nodata": "No data",
-        "dry": "Water now",
-        "check": "Check soon",
-        "good": "Moisture looks good",
-        "wet": "Wet / hold off",
-    }
-
-    return (
-        label_map[key],
-        styles["status_border"][key],
-        styles["status_bg"][key],
+    fig.update_layout(
+        title={"text": title, "x": 0.02, "xanchor": "left"},
+        xaxis_title="Time",
+        yaxis_title=yaxis_title,
+        template="plotly_dark",
+        height=460,
+        paper_bgcolor=styles["plot_bg"],
+        plot_bgcolor=styles["plot_bg"],
+        font={"color": styles["text"]},
+        margin=dict(l=40, r=20, t=60, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified",
     )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
+
+    if yaxis_range is not None:
+        fig.update_yaxes(range=yaxis_range)
+
+    return fig
 
 
-def recommendation_pill(label, moisture, rules, dark=True, offline=False):
-    styles = theme_styles(True)
-    key = moisture_status_key(moisture, rules, offline=offline)
-
-    return html.Div(
-        label,
-        style={
-            "display": "inline-block",
-            "padding": "10px 14px",
-            "borderRadius": "999px",
-            "backgroundColor": styles["status_pill_bg"][key],
-            "color": styles["status_pill_text"][key],
-            "fontWeight": "700",
-            "fontSize": "0.95rem",
-            "lineHeight": "1.1",
-            "border": f"1px solid {styles['status_border'][key]}",
-            "boxShadow": "0 2px 10px rgba(0,0,0,0.12)",
-        },
-    )
-
-
-def make_card_shell(plant, dark=True):
-    styles = theme_styles(True)
-    return html.Div(id=f"card-{plant}", style=styles["card_shell"])
-
-
-def build_moisture_bar(moisture, color, dark=True):
-    styles = theme_styles(True)
-    safe = max(0, min(100, moisture))
-
-    return html.Div(
-        [
-            html.Div("Moisture level", style={"fontSize": "0.85rem", "marginBottom": "6px"}),
-            html.Div(
-                [
-                    html.Div(
-                        style={
-                            "width": f"{safe}%",
-                            "height": "100%",
-                            "background": color,
-                            "borderRadius": "999px",
-                        }
-                    )
-                ],
-                style={
-                    "height": "12px",
-                    "backgroundColor": styles["bar_track"],
-                    "borderRadius": "999px",
-                    "overflow": "hidden",
-                },
-            ),
-        ],
-        style={"marginBottom": "14px"},
-    )
-
-
-def build_health_panel(health_state, used_fallback, dark=True, show_details=False):
-    styles = theme_styles(True)
-
-    def pill(label, ok):
-        return html.Span(
-            f"{label}: {'OK' if ok else 'Issue'}",
-            style={
-                **styles["chip"],
-                "color": styles["status_border"]["good"] if ok else styles["status_border"]["dry"],
-            },
-        )
-
-    items = [
-        pill("Adafruit", health_state["adafruit_ok"]),
-        pill("CSV", health_state["csv_ok"]),
-        pill("Water log", health_state["watering_log_ok"]),
-        html.Span(
-            f"Last successful fetch: {health_state.get('last_successful_fetch', 'Never')}",
-            style=styles["chip"],
-        ),
+def add_moisture_guides(fig, plant, rules, color):
+    guide_specs = [
+        (rules["dry"], "dot", f"{plant} dry"),
+        (rules["ideal_low"], "dash", f"{plant} ideal low"),
+        (rules["ideal_high"], "dash", f"{plant} ideal high"),
     ]
 
-    if show_details:
-        for label, ok in health_state.get("startup_checks", []):
-            items.append(
-                html.Span(
-                    f"{label}: {'OK' if ok else 'Missing'}",
-                    style={
-                        **styles["chip"],
-                        "color": styles["status_border"]["good"] if ok else styles["status_border"]["dry"],
-                    },
-                )
-            )
-
-    if used_fallback:
-        items.append(
-            html.Span(
-                "Using last good data",
-                style={**styles["chip"], "color": styles["status_border"]["check"]},
+    for y_value, dash, name in guide_specs:
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                name=name,
+                line={"dash": dash, "width": 2, "color": color},
+                hoverinfo="skip",
+                visible="legendonly",
+                legendgroup=plant,
             )
         )
-
-    if health_state.get("last_error"):
-        items.append(
-            html.Div(
-                f"Last error: {health_state['last_error']}",
-                style={"fontSize": "0.9rem", "color": styles["subtext"]},
-            )
+        fig.add_hline(
+            y=y_value,
+            line_width=1,
+            line_dash=dash,
+            line_color=color,
+            opacity=0.22,
         )
 
-    return html.Div(items, style={**styles["section"], "marginBottom": "16px"})
 
+def build_figures(histories, rules_dict, label_suffix="", dark=True, temp_max=120.0):
+    moisture_fig = go.Figure()
+    temp_fig = go.Figure()
+    all_moisture = []
+    all_temp = []
 
-def build_settings_panel(rules_dict, dark=True, health_state_data=None, used_fallback=False):
-    styles = theme_styles(True)
+    for plant, hist in histories.items():
+        times = hist.get("times", [])
+        moisture = hist.get("moisture", [])
+        temp = hist.get("temp", [])
 
-    input_style = {
-        "width": "100%",
-        "padding": "10px",
-        "borderRadius": "10px",
-        "border": f"1px solid {styles['border']}",
-        "backgroundColor": styles["input_bg"],
-        "color": styles["input_text"],
-    }
+        if not times:
+            continue
 
-    health_state_data = health_state_data or {}
+        rules = rules_dict.get(plant, {"dry": 20, "ideal_low": 35, "ideal_high": 80})
 
-    children = [
-        html.H3("Settings", style={"marginTop": "0"}),
-        html.P("Rules are stored in this browser.", style={"color": styles["subtext"]}),
-        html.Div(
-            [
-                html.Span(f"Offline threshold: {SENSOR_OFFLINE_MINUTES} min", style=styles["chip"]),
-                html.Span(f"Watering jump: {WATERING_JUMP_THRESHOLD:.1f}%", style=styles["chip"]),
-                html.Span(f"CSV retention: {CSV_RETENTION_DAYS} days", style=styles["chip"]),
-                html.Span(f"CSV rows: {get_csv_row_count()}", style=styles["chip"]),
-                html.Span(f"Temp cap: {TEMP_F_MAX:.0f}°F", style=styles["chip"]),
-            ]
-        ),
-        html.P(f"CSV last write: {get_csv_last_write_time()}", style={"color": styles["subtext"]}),
-        html.P(f"CSV status: {last_csv_status}", style={"fontWeight": "600"}),
-        html.Div(
-            [
-                html.H4("Startup / service status", style={"marginTop": "6px", "marginBottom": "10px"}),
-                build_health_panel(health_state_data, used_fallback, dark=True, show_details=True),
-            ],
-            style={"marginBottom": "14px"},
-        ),
-    ]
-
-    for plant in FEEDS:
-        pr = rules_dict[plant]
-        children.append(
-            html.Div(
-                [
-                    html.H4(plant, style={"marginTop": "0"}),
-                    html.Div(
-                        [
-                            html.Div(
-                                [
-                                    html.Label("Dry threshold"),
-                                    dcc.Input(
-                                        id={"type": "dry-input", "plant": plant},
-                                        type="number",
-                                        value=pr["dry"],
-                                        min=0,
-                                        max=100,
-                                        step=1,
-                                        style=input_style,
-                                    ),
-                                ],
-                                style={"flex": "1"},
-                            ),
-                            html.Div(
-                                [
-                                    html.Label("Ideal low"),
-                                    dcc.Input(
-                                        id={"type": "ideal-low-input", "plant": plant},
-                                        type="number",
-                                        value=pr["ideal_low"],
-                                        min=0,
-                                        max=100,
-                                        step=1,
-                                        style=input_style,
-                                    ),
-                                ],
-                                style={"flex": "1"},
-                            ),
-                            html.Div(
-                                [
-                                    html.Label("Ideal high"),
-                                    dcc.Input(
-                                        id={"type": "ideal-high-input", "plant": plant},
-                                        type="number",
-                                        value=pr["ideal_high"],
-                                        min=0,
-                                        max=100,
-                                        step=1,
-                                        style=input_style,
-                                    ),
-                                ],
-                                style={"flex": "1"},
-                            ),
-                        ],
-                        style={"display": "flex", "gap": "12px"},
-                    ),
-                ],
-                style={**styles["section"], "marginBottom": "14px"},
-            )
-        )
-
-    children.append(
-        html.Div(
-            [
-                html.Button(
-                    "Save Rules",
-                    id="save-rules-button",
-                    n_clicks=0,
-                    style={**styles["button"], "marginRight": "12px"},
+        moisture_fig.add_trace(
+            go.Scatter(
+                x=times,
+                y=moisture,
+                mode="lines",
+                name=plant,
+                line={"shape": "spline", "smoothing": MOISTURE_SMOOTHING},
+                connectgaps=True,
+                legendgroup=plant,
+                hovertemplate=(
+                    "<b>%{fullData.name}</b><br>"
+                    "Time: %{x}<br>"
+                    "Moisture: %{y:.1f}%<br>"
+                    f"Dry below: {rules['dry']:.0f}%<br>"
+                    f"Ideal: {rules['ideal_low']:.0f}%–{rules['ideal_high']:.0f}%"
+                    "<extra></extra>"
                 ),
-                html.Button(
-                    "Send ntfy Test",
-                    id="ntfy-test-button",
-                    n_clicks=0,
-                    style={**styles["button"], "marginRight": "12px"},
-                ),
-                html.A(
-                    "Download CSV",
-                    href="/download-csv",
-                    target="_blank",
-                    style={
-                        **styles["button"],
-                        "display": "inline-block",
-                        "textDecoration": "none",
-                    },
-                ),
-            ]
+            )
         )
+        color = moisture_fig.data[-1].line.color
+        add_moisture_guides(moisture_fig, plant, rules, color)
+
+        temp_fig.add_trace(
+            go.Scatter(
+                x=times,
+                y=temp,
+                mode="lines",
+                name=plant,
+                line={"shape": "spline", "smoothing": TEMP_SMOOTHING},
+                connectgaps=True,
+                legendgroup=plant,
+                hovertemplate=(
+                    "<b>%{fullData.name}</b><br>"
+                    "Time: %{x}<br>"
+                    "Temperature: %{y:.1f}°F"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+        all_moisture.extend(moisture)
+        all_temp.extend(temp)
+
+    moisture_range = get_axis_range(all_moisture, pad=5, min_floor=0, max_cap=100)
+    temp_range = get_axis_range(all_temp, pad=4, min_floor=0, max_cap=temp_max)
+
+    moisture_fig = style_figure(
+        moisture_fig,
+        f"{label_suffix} Moisture".strip(),
+        "Moisture (%)",
+        yaxis_range=moisture_range,
+    )
+    temp_fig = style_figure(
+        temp_fig,
+        f"{label_suffix} Temperature".strip(),
+        "Temperature (°F)",
+        yaxis_range=temp_range,
     )
 
-    children.append(html.Div(id="save-rules-status", style={"marginTop": "10px", "fontWeight": "600"}))
-    children.append(html.Div(id="ntfy-test-status", style={"marginTop": "10px", "fontWeight": "600"}))
-
-    return html.Div(children, style=styles["section"])
+    return moisture_fig, temp_fig
