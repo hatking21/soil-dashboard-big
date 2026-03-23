@@ -71,6 +71,7 @@ def download_csv():
 
 
 plant_names = list(FEEDS.keys())
+
 init_notification_state(plant_names)
 run_startup_checks()
 
@@ -122,7 +123,10 @@ def downsample_history_dict(histories, target_points=None):
         temp = row.get("temp", [])
 
         ds_times, ds_moisture, ds_temp = min_max_bucket_downsample(
-            times, moisture, temp, target_points=target_points
+            times,
+            moisture,
+            temp,
+            target_points=target_points,
         )
 
         out[plant] = {
@@ -130,13 +134,14 @@ def downsample_history_dict(histories, target_points=None):
             "moisture": ds_moisture,
             "temp": ds_temp,
         }
+
     return out
 
 
 def serialize_histories(histories, target_points=None):
     histories = downsample_history_dict(histories, target_points=target_points)
-    out = {}
 
+    out = {}
     for plant, row in histories.items():
         out[plant] = {
             "times": row.get("times", []),
@@ -148,12 +153,25 @@ def serialize_histories(histories, target_points=None):
 
 
 def deserialize_histories(hist):
+    """
+    Convert stored ISO timestamps into timezone-aware datetimes in LOCAL_TZ
+    so Plotly displays chart times in the expected local timezone.
+    """
     out = {}
     hist = hist or {}
 
     for plant, row in hist.items():
+        converted_times = []
+        for t in row.get("times", []):
+            dt = datetime.fromisoformat(t)
+
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+
+            converted_times.append(dt.astimezone(LOCAL_TZ))
+
         out[plant] = {
-            "times": [datetime.fromisoformat(t) for t in row.get("times", [])],
+            "times": converted_times,
             "moisture": row.get("moisture", []),
             "temp": row.get("temp", []),
         }
@@ -188,7 +206,10 @@ def build_shell(live_range=1):
                                 [
                                     html.Div(
                                         [
-                                            html.H1("Plant Soil Monitor", style={"margin": "0 0 8px 0", "fontSize": "2rem"}),
+                                            html.H1(
+                                                "Plant Soil Monitor",
+                                                style={"margin": "0 0 8px 0", "fontSize": "2rem"},
+                                            ),
                                             html.P(
                                                 "Track moisture, temperature, watering, alerts, and trends in one place.",
                                                 style={"margin": "0", "opacity": "0.92"},
@@ -196,7 +217,12 @@ def build_shell(live_range=1):
                                         ]
                                     ),
                                 ],
-                                style={"display": "flex", "justifyContent": "space-between", "alignItems": "flex-start", "gap": "16px"},
+                                style={
+                                    "display": "flex",
+                                    "justifyContent": "space-between",
+                                    "alignItems": "flex-start",
+                                    "gap": "16px",
+                                },
                             )
                         ],
                     ),
@@ -216,17 +242,40 @@ def build_shell(live_range=1):
                         id="view-tabs",
                         value="live",
                         children=[
-                            dcc.Tab(label="Live", value="live", style=styles["tab"], selected_style=styles["tab_selected"]),
-                            dcc.Tab(label="Weekly", value="weekly", style=styles["tab"], selected_style=styles["tab_selected"]),
-                            dcc.Tab(label="Monthly", value="monthly", style=styles["tab"], selected_style=styles["tab_selected"]),
-                            dcc.Tab(label="Settings", value="settings", style=styles["tab"], selected_style=styles["tab_selected"]),
+                            dcc.Tab(
+                                label="Live",
+                                value="live",
+                                style=styles["tab"],
+                                selected_style=styles["tab_selected"],
+                            ),
+                            dcc.Tab(
+                                label="Weekly",
+                                value="weekly",
+                                style=styles["tab"],
+                                selected_style=styles["tab_selected"],
+                            ),
+                            dcc.Tab(
+                                label="Monthly",
+                                value="monthly",
+                                style=styles["tab"],
+                                selected_style=styles["tab_selected"],
+                            ),
+                            dcc.Tab(
+                                label="Settings",
+                                value="settings",
+                                style=styles["tab"],
+                                selected_style=styles["tab_selected"],
+                            ),
                         ],
                     ),
                     html.Div(
                         id="live-range-container",
                         style={"marginTop": "16px", "display": "block"},
                         children=[
-                            html.Div("Live range", style={"marginBottom": "8px", "fontWeight": "600"}),
+                            html.Div(
+                                "Live range",
+                                style={"marginBottom": "8px", "fontWeight": "600"},
+                            ),
                             html.Div(
                                 [
                                     range_button("1 hour", 1),
@@ -235,7 +284,7 @@ def build_shell(live_range=1):
                                 ],
                                 style={"display": "flex", "gap": "10px", "flexWrap": "wrap"},
                             ),
-                        ]
+                        ],
                     ),
                     html.Div(id="tab-content", style={"marginTop": "16px"}),
                 ],
@@ -263,7 +312,6 @@ app.layout = html.Div(
         html.Div(id="app-shell", children=build_shell(1)),
     ],
 )
-
 
 
 @app.callback(
@@ -368,7 +416,11 @@ def send_test_notification(n_clicks):
 
 @app.callback(
     [Output(f"card-{plant}", "children") for plant in plant_names]
-    + [Output("system-status", "children"), Output("health-panel", "children"), Output("alert-banner", "children")],
+    + [
+        Output("system-status", "children"),
+        Output("health-panel", "children"),
+        Output("alert-banner", "children"),
+    ],
     Input("snapshot-store", "data"),
     Input("history-24-store", "data"),
     Input("plant-rules-store", "data"),
@@ -405,7 +457,9 @@ def update_cards(snapshot_data, history24_data, rules_dict):
 
             rec, rec_color, bg_color = moisture_colors(moisture, rules_dict[plant], dark=dark)
             if offline:
-                rec, rec_color, bg_color = moisture_colors(None, rules_dict[plant], dark=dark, offline=True)
+                rec, rec_color, bg_color = moisture_colors(
+                    None, rules_dict[plant], dark=dark, offline=True
+                )
 
             latest_snapshot[plant] = {
                 "moisture": moisture,
@@ -430,42 +484,63 @@ def update_cards(snapshot_data, history24_data, rules_dict):
 
             if rec == "Water now" and not offline:
                 dry_alerts.append(plant)
+
             if offline:
                 offline_alerts.append(plant)
 
             hist = history24_data.get(plant, {})
             hist_times = [datetime.fromisoformat(t) for t in hist.get("times", [])]
             hist_m = hist.get("moisture", [])
+
             trend = compute_trend_arrow(hist_m)
             eta_hours = estimate_hours_until_dry(hist_times, hist_m, rules_dict[plant]["dry"])
             eta_text = "Dry ETA: unknown" if eta_hours is None else f"Dry ETA: ~{eta_hours:.1f} hr"
 
             successful_fetches += 1
             last_update = ts.astimezone(LOCAL_TZ).strftime("%m/%d %I:%M %p") if ts else "--"
-            title = f"{meta['emoji']} {plant}"
 
+            title = f"{meta['emoji']} {plant}"
             card = html.Div(
                 [
                     html.Div(
                         [
                             html.H3(title, style={"margin": "0", "fontSize": "1.1rem"}),
-                            recommendation_pill(rec, moisture, rules_dict[plant], dark=dark, offline=offline),
+                            recommendation_pill(
+                                rec, moisture, rules_dict[plant], dark=dark, offline=offline
+                            ),
                         ],
-                        style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "14px"},
+                        style={
+                            "display": "flex",
+                            "justifyContent": "space-between",
+                            "alignItems": "center",
+                            "marginBottom": "14px",
+                        },
                     ),
                     html.Div(
                         [
                             html.Div(
                                 [
-                                    html.Div("💧 Moisture", style={"color": styles["subtext"], "fontSize": "0.85rem"}),
-                                    html.Div(f"{moisture:.1f}% {trend}", style={"fontSize": "1.25rem", "fontWeight": "700"}),
+                                    html.Div(
+                                        " Moisture",
+                                        style={"color": styles["subtext"], "fontSize": "0.85rem"},
+                                    ),
+                                    html.Div(
+                                        f"{moisture:.1f}% {trend}",
+                                        style={"fontSize": "1.25rem", "fontWeight": "700"},
+                                    ),
                                 ],
                                 style={"flex": "1"},
                             ),
                             html.Div(
                                 [
-                                    html.Div("🌡 Temp", style={"color": styles["subtext"], "fontSize": "0.85rem"}),
-                                    html.Div(f"{min(temp_f, TEMP_F_MAX):.1f}°F", style={"fontSize": "1.25rem", "fontWeight": "700"}),
+                                    html.Div(
+                                        " Temp",
+                                        style={"color": styles["subtext"], "fontSize": "0.85rem"},
+                                    ),
+                                    html.Div(
+                                        f"{min(temp_f, TEMP_F_MAX):.1f}°F",
+                                        style={"fontSize": "1.25rem", "fontWeight": "700"},
+                                    ),
                                 ],
                                 style={"flex": "1"},
                             ),
@@ -473,9 +548,15 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                         style={"display": "flex", "gap": "12px", "marginBottom": "12px"},
                     ),
                     build_moisture_bar(moisture, rec_color, dark=dark),
-                    html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
+                    html.Div(
+                        format_last_watered(plant),
+                        style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"},
+                    ),
                     html.Div(eta_text, style={"marginBottom": "8px", "fontSize": "0.92rem"}),
-                    html.Div(f"Last update: {last_update}", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
+                    html.Div(
+                        f"Last update: {last_update}",
+                        style={"fontSize": "0.92rem", "color": styles["subtext"]},
+                    ),
                 ],
                 style={
                     "backgroundColor": bg_color,
@@ -492,6 +573,7 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                 rank = -2
             elif rec == "Water now":
                 rank = -1
+
             order_rank.append((rank, moisture, plant, card))
 
         else:
@@ -506,8 +588,14 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                             "marginBottom": "10px",
                         },
                     ),
-                    html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
-                    html.Div("Last update: --", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
+                    html.Div(
+                        format_last_watered(plant),
+                        style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"},
+                    ),
+                    html.Div(
+                        "Last update: --",
+                        style={"fontSize": "0.92rem", "color": styles["subtext"]},
+                    ),
                 ],
                 style={
                     "backgroundColor": styles["status_bg"]["nodata"],
@@ -518,6 +606,7 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                     "color": styles["text"],
                 },
             )
+
             order_rank.append((-3, 999, plant, card))
             offline_alerts.append(plant)
             latest_snapshot[plant] = {
@@ -533,6 +622,7 @@ def update_cards(snapshot_data, history24_data, rules_dict):
     cards = [[item[3]] for item in order_rank]
 
     refresh_text = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
+
     system_status = html.Div(
         [
             html.Div(f"Last refresh: {refresh_text}", style=styles["chip"]),
@@ -686,7 +776,12 @@ def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict)
     if tab == "settings":
         snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
         used_fallback = snapshot_data.get("used_fallback", False)
-        return build_settings_panel(rules_dict, dark=dark, health_state_data=health_state, used_fallback=used_fallback)
+        return build_settings_panel(
+            rules_dict,
+            dark=dark,
+            health_state_data=health_state,
+            used_fallback=used_fallback,
+        )
 
     if tab == "live":
         live_hist = {
@@ -702,15 +797,20 @@ def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict)
             dark=dark,
             temp_max=TEMP_F_MAX,
         )
+
         return html.Div(
             [
                 html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
-                html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"}),
+                html.Div(
+                    dcc.Graph(figure=temp_fig),
+                    style={**styles["section"], "marginTop": "16px"},
+                ),
             ]
         )
 
     if tab == "weekly":
         weekly_hist = deserialize_histories(h7)
+
         moisture_fig, temp_fig = build_figures(
             weekly_hist,
             rules_dict,
@@ -718,14 +818,19 @@ def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict)
             dark=dark,
             temp_max=TEMP_F_MAX,
         )
+
         return html.Div(
             [
                 html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
-                html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"}),
+                html.Div(
+                    dcc.Graph(figure=temp_fig),
+                    style={**styles["section"], "marginTop": "16px"},
+                ),
             ]
         )
 
     monthly_hist = deserialize_histories(h30)
+
     moisture_fig, temp_fig = build_figures(
         monthly_hist,
         rules_dict,
@@ -733,10 +838,14 @@ def render_tab(tab, live_range, h1, h6, h24, h7, h30, snapshot_data, rules_dict)
         dark=dark,
         temp_max=TEMP_F_MAX,
     )
+
     return html.Div(
         [
             html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]),
-            html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"}),
+            html.Div(
+                dcc.Graph(figure=temp_fig),
+                style={**styles["section"], "marginTop": "16px"},
+            ),
         ]
     )
 
