@@ -361,7 +361,9 @@ def fetch_latest_snapshot():
 def fetch_history(hours=24, cache_name="history"):
     session = make_session()
     histories = {}
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(hours=hours)
 
     try:
         for plant, meta in FEEDS.items():
@@ -371,7 +373,11 @@ def fetch_history(hours=24, cache_name="history"):
             entries = _request_json(
                 session,
                 url,
-                params={"limit": 1000},
+                params={
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "limit": 1000,
+                },
                 timeout=REQUEST_TIMEOUT_HISTORY,
             )
 
@@ -394,10 +400,9 @@ def fetch_history(hours=24, cache_name="history"):
                 except Exception:
                     continue
 
-                if ts >= cutoff:
-                    times.append(ts.isoformat())
-                    moisture_vals.append(moisture)
-                    temp_vals.append(temp_f)
+                times.append(ts.isoformat())
+                moisture_vals.append(moisture)
+                temp_vals.append(temp_f)
 
             histories[plant] = {
                 "times": times,
