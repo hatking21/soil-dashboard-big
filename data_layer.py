@@ -368,51 +368,18 @@ def fetch_history(hours=24, cache_name="history"):
             feed_key = meta["feed"]
             url = f"https://io.adafruit.com/api/v2/{AIO_USERNAME}/feeds/{feed_key}/data"
 
-            all_entries = []
-            page = 0
-            per_page = 1000
-
-            while True:
-                entries = _request_json(
-                    session,
-                    url,
-                    params={
-                        "limit": per_page,
-                        "page": page,
-                    },
-                    timeout=REQUEST_TIMEOUT_HISTORY,
-                )
-
-                if not entries:
-                    break
-
-                all_entries.extend(entries)
-
-                oldest_ts_in_page = None
-                for entry in entries:
-                    created_at = entry.get("created_at")
-                    if not created_at:
-                        continue
-                    try:
-                        ts = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                        if oldest_ts_in_page is None or ts < oldest_ts_in_page:
-                            oldest_ts_in_page = ts
-                    except Exception:
-                        continue
-
-                if len(entries) < per_page:
-                    break
-
-                if oldest_ts_in_page is not None and oldest_ts_in_page < cutoff:
-                    break
-
-                page += 1
+            entries = _request_json(
+                session,
+                url,
+                params={"limit": 1000},
+                timeout=REQUEST_TIMEOUT_HISTORY,
+            )
 
             times = []
             moisture_vals = []
             temp_vals = []
 
-            for entry in reversed(all_entries):
+            for entry in reversed(entries or []):
                 created_at = entry.get("created_at")
                 value = entry.get("value")
 
