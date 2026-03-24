@@ -339,18 +339,45 @@ def filter_histories_by_selection(histories, selected_plants):
     return filtered if filtered else histories
 
 
+def format_summary_timestamp(ts):
+    if ts is None:
+        return "—"
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(LOCAL_TZ).strftime("%m/%d %I:%M %p")
+
+
 def calc_summary_for_plant(row):
+    times = row.get("times", [])
     moisture = row.get("moisture", [])
     temp = row.get("temp", [])
-    if not moisture or not temp:
+    if not moisture or not temp or not times:
         return None
+
+    n = min(len(times), len(moisture), len(temp))
+    if n == 0:
+        return None
+
+    times = times[:n]
+    moisture = moisture[:n]
+    temp = temp[:n]
+
+    m_min_idx = min(range(n), key=lambda i: moisture[i])
+    m_max_idx = max(range(n), key=lambda i: moisture[i])
+    t_min_idx = min(range(n), key=lambda i: temp[i])
+    t_max_idx = max(range(n), key=lambda i: temp[i])
+
     return {
         "m_avg": sum(moisture) / len(moisture),
         "m_min": min(moisture),
         "m_max": max(moisture),
+        "m_min_ts": times[m_min_idx],
+        "m_max_ts": times[m_max_idx],
         "t_avg": sum(temp) / len(temp),
         "t_min": min(temp),
         "t_max": max(temp),
+        "t_min_ts": times[t_min_idx],
+        "t_max_ts": times[t_max_idx],
     }
 
 
@@ -369,9 +396,15 @@ def build_summary_cards(histories, selected_plants, dark=True):
                 [
                     html.Div(plant, style={"fontWeight": "700", "marginBottom": "8px", "fontSize": "1rem"}),
                     html.Div(f"Moisture avg: {summary['m_avg']:.1f}%"),
-                    html.Div(f"Moisture min/max: {summary['m_min']:.1f}% / {summary['m_max']:.1f}%"),
+                    html.Div(f"Moisture min: {summary['m_min']:.1f}%"),
+                    html.Div(f"At: {format_summary_timestamp(summary['m_min_ts'])}", style={"fontSize": "0.88rem", "color": styles.get("subtext", "#9ca3af"), "marginBottom": "4px"}),
+                    html.Div(f"Moisture max: {summary['m_max']:.1f}%"),
+                    html.Div(f"At: {format_summary_timestamp(summary['m_max_ts'])}", style={"fontSize": "0.88rem", "color": styles.get("subtext", "#9ca3af"), "marginBottom": "6px"}),
                     html.Div(f"Temp avg: {summary['t_avg']:.1f}°F"),
-                    html.Div(f"Temp min/max: {summary['t_min']:.1f}°F / {summary['t_max']:.1f}°F"),
+                    html.Div(f"Temp min: {summary['t_min']:.1f}°F"),
+                    html.Div(f"At: {format_summary_timestamp(summary['t_min_ts'])}", style={"fontSize": "0.88rem", "color": styles.get("subtext", "#9ca3af"), "marginBottom": "4px"}),
+                    html.Div(f"Temp max: {summary['t_max']:.1f}°F"),
+                    html.Div(f"At: {format_summary_timestamp(summary['t_max_ts'])}", style={"fontSize": "0.88rem", "color": styles.get("subtext", "#9ca3af")}),
                 ],
                 style={
                     "backgroundColor": styles.get("card_bg", "#111827"),
