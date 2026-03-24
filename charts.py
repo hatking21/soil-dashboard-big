@@ -29,11 +29,14 @@ def add_ideal_band(fig, ideal_low, ideal_high):
     )
 
 
-def style_figure(fig, title, yaxis_title, yaxis_range=None):
+def style_figure(fig, title, yaxis_title, yaxis_range=None, label_suffix=""):
     styles = theme_styles(True)
+
+    weekly_or_monthly = "Weekly" in label_suffix or "Monthly" in label_suffix
+
     fig.update_layout(
         title={"text": title, "x": 0.02, "xanchor": "left"},
-        xaxis_title="Time",
+        xaxis_title="Time (local)",
         yaxis_title=yaxis_title,
         template="plotly_dark",
         height=460,
@@ -44,10 +47,25 @@ def style_figure(fig, title, yaxis_title, yaxis_range=None):
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified",
     )
-    fig.update_xaxes(showgrid=False)
+
+    if weekly_or_monthly:
+        fig.update_xaxes(
+            showgrid=False,
+            tickformat="%b %d\n%I:%M %p",
+            hoverformat="%Y-%m-%d %I:%M:%S %p",
+        )
+    else:
+        fig.update_xaxes(
+            showgrid=False,
+            tickformat="%I:%M %p",
+            hoverformat="%Y-%m-%d %I:%M:%S %p",
+        )
+
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
+
     if yaxis_range is not None:
         fig.update_yaxes(range=yaxis_range)
+
     return fig
 
 
@@ -128,12 +146,14 @@ def build_figures(histories, rules_dict, label_suffix="", dark=True, temp_max=12
         f"{label_suffix} Moisture".strip(),
         "Moisture (%)",
         yaxis_range=moisture_range,
+        label_suffix=label_suffix,
     )
     temp_fig = style_figure(
         temp_fig,
         f"{label_suffix} Temperature".strip(),
         "Temperature (°F)",
         yaxis_range=temp_range,
+        label_suffix=label_suffix,
     )
 
     if trace_count == 0:
