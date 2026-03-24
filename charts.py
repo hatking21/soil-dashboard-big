@@ -36,7 +36,7 @@ def style_figure(fig, title, yaxis_title, yaxis_range=None, label_suffix=""):
 
     fig.update_layout(
         title={"text": title, "x": 0.02, "xanchor": "left"},
-        xaxis_title="Time (local)",
+        xaxis_title="Time (days)",
         yaxis_title=yaxis_title,
         template="plotly_dark",
         height=460,
@@ -51,7 +51,7 @@ def style_figure(fig, title, yaxis_title, yaxis_range=None, label_suffix=""):
     if weekly_or_monthly:
         fig.update_xaxes(
             showgrid=False,
-            tickformat="%b %d\n%I:%M %p",
+            tickformat="%b %d",
             hoverformat="%Y-%m-%d %I:%M:%S %p",
         )
     else:
