@@ -33,10 +33,11 @@ def style_figure(fig, title, yaxis_title, yaxis_range=None, label_suffix=""):
     styles = theme_styles(True)
 
     weekly_or_monthly = "Weekly" in label_suffix or "Monthly" in label_suffix
+    xaxis_title = "Time (Days)" if weekly_or_monthly else "Time (Local)"
 
     fig.update_layout(
         title={"text": title, "x": 0.02, "xanchor": "left"},
-        xaxis_title="Time (days)",
+        xaxis_title=xaxis_title,
         yaxis_title=yaxis_title,
         template="plotly_dark",
         height=460,
