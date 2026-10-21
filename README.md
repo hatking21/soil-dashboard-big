@@ -11,7 +11,7 @@ This dashboard shows:
 - offline sensor detection
 - CSV logging and CSV download
 - ntfy alerts for dry plants, offline sensors, and a daily summary
-- browser-saved moisture thresholds for each plant
+- server-saved moisture thresholds for each plant
 
 ## Current dashboard structure
 
@@ -87,3 +87,54 @@ Good next additions would be:
 - per-plant notification cooldowns
 - calibration tools for each sensor
 - a compact mobile-first card layout
+
+## Monitoring with the browser closed
+
+`monitor.py` polls Adafruit IO every `CARD_REFRESH_MS` (default five minutes).
+It owns CSV logging, watering detection, offline/dry alerts, and the daily
+summary. Dash callbacks only display the results. The ESP32 must remain powered
+and connected to Wi-Fi; your computer and browser can be off.
+
+Gunicorn starts the monitor with `gunicorn.conf.py`. Use exactly one worker and
+one service instance, without preload, to avoid duplicate collectors. Local
+`python app.py` also starts it, but stops when that computer/process stops.
+
+### Render deployment
+
+The Blueprint in `render.yaml` proposes a **paid Starter web service** and a
+1 GB persistent disk. Applying it can incur hosting and disk charges. This PR
+does not change your running Render account. Free Render web services sleep
+without incoming traffic, so a background thread alone cannot keep a free
+service monitoring continuously. See https://render.com/docs/free.
+
+For an existing manually configured service, set these in Render yourself
+(changing this file does not necessarily update a manually created service):
+
+1. Choose an always-on paid instance and attach a persistent disk at `/var/data`.
+2. Set the start command to `gunicorn --config gunicorn.conf.py app:server`.
+3. Keep `AIO_USERNAME`, `AIO_KEY`, and `NTFY_TOPIC` configured. Set `CSV_LOG_PATH`
+   to `/var/data/plant_readings.csv`, `WATERING_LOG_PATH` to
+   `/var/data/watering_events.csv`, `ERROR_LOG_PATH` to
+   `/var/data/dashboard_errors.csv`, and `CACHE_DIR` to `/var/data/cache`.
+4. Back up any existing CSVs before redeploying and copy them to the new disk if
+   you want to retain them. Files on the old ephemeral filesystem are not migrated.
+5. After deploy, open Settings and save your preferred plant rules once. Old
+   browser-only rules are not automatically migrated. All browsers now share
+   these rules, and a new page load reads the server copy.
+6. Close every dashboard tab for at least two polling intervals. Reopen it and
+   verify recent CSV timestamps; use a safe temporary dry threshold to test an
+   ntfy alert while the page is closed, then restore it.
+
+Notification transition flags and the daily-summary date are saved on disk so
+normal restarts do not repeat already delivered alerts. Failed/rate-limited
+alerts are retried next cycle. A crash between sending and saving can still
+repeat an alert. Startup begins with current feed values, not a backfill of
+readings missed during downtime; watering detection needs consecutive samples.
+History charts still load on demand from Adafruit IO.
+
+If you prefer no cloud hosting charge, run this process as a boot-time service
+on an existing always-on Raspberry Pi instead; it still needs power, Internet,
+and persistent paths configured via the environment variables above.
+
+Validation: `python -m unittest -v test_monitor`. Tests mock external services;
+real Adafruit/ntfy credentials are not needed.

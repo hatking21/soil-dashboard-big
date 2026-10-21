@@ -2,6 +2,26 @@ services:
   - type: web
     name: soil-monitor
     env: python
+    plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:server
+    startCommand: gunicorn --config gunicorn.conf.py app:server
     autoDeploy: true
+    disk:
+      name: plant-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: CSV_LOG_PATH
+        value: /var/data/plant_readings.csv
+      - key: WATERING_LOG_PATH
+        value: /var/data/watering_events.csv
+      - key: ERROR_LOG_PATH
+        value: /var/data/dashboard_errors.csv
+      - key: CACHE_DIR
+        value: /var/data/cache
+      - key: AIO_USERNAME
+        sync: false
+      - key: AIO_KEY
+        sync: false
+      - key: NTFY_TOPIC
+        sync: false
