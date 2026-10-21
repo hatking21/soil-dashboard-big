@@ -1,6 +1,9 @@
 import plotly.graph_objects as go
 
 from styles import theme_styles
+from config import FEEDS
+
+PLANT_COLORS = dict(zip(FEEDS, ["#6ee7b7", "#93c5fd", "#f9a8d4", "#fcd34d"]))
 
 MOISTURE_SMOOTHING = 0.45
 TEMP_SMOOTHING = 1.0
@@ -44,9 +47,11 @@ def style_figure(fig, title, yaxis_title, yaxis_range=None, label_suffix=""):
         paper_bgcolor=styles["plot_bg"],
         plot_bgcolor=styles["plot_bg"],
         font={"color": styles["text"]},
-        margin=dict(l=40, r=20, t=60, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=20, t=60, b=100),
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="left", x=0),
         hovermode="x unified",
+        uirevision=title,
+        dragmode="pan",
     )
 
     if weekly_or_monthly:
@@ -89,6 +94,7 @@ def build_figures(histories, rules_dict, label_suffix="", dark=True, temp_max=12
 
     all_moisture = []
     all_temp = []
+    selected_with_data = [p for p, h in (histories or {}).items() if h.get("times")]
     band_added = False
     trace_count = 0
 
@@ -111,8 +117,9 @@ def build_figures(histories, rules_dict, label_suffix="", dark=True, temp_max=12
                 y=moisture,
                 mode="lines",
                 name=plant,
-                line={"shape": "spline", "smoothing": MOISTURE_SMOOTHING},
-                connectgaps=True,
+                line={"shape": "linear", "color": PLANT_COLORS.get(plant), "width": 2.5},
+                hovertemplate="%{y:.1f}%<extra>" + plant + "</extra>",
+                connectgaps=False,
             )
         )
 
@@ -122,8 +129,9 @@ def build_figures(histories, rules_dict, label_suffix="", dark=True, temp_max=12
                 y=temp,
                 mode="lines",
                 name=plant,
-                line={"shape": "spline", "smoothing": TEMP_SMOOTHING},
-                connectgaps=True,
+                line={"shape": "linear", "color": PLANT_COLORS.get(plant), "width": 2.5},
+                hovertemplate="%{y:.1f}°F<extra>" + plant + "</extra>",
+                connectgaps=False,
             )
         )
 
@@ -131,7 +139,7 @@ def build_figures(histories, rules_dict, label_suffix="", dark=True, temp_max=12
         all_moisture.extend(moisture)
         all_temp.extend(temp)
 
-        if not band_added and plant in rules_dict:
+        if len(selected_with_data) == 1 and not band_added and plant in rules_dict:
             add_ideal_band(
                 moisture_fig,
                 rules_dict[plant]["ideal_low"],

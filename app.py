@@ -36,12 +36,15 @@ from notifications import (
 from styles import theme_styles
 import ui as ui_module
 import monitor
+import notifications
+import calibration
 
 # Weekly refresh every hour, monthly refresh every day
 WEEKLY_REFRESH_MS = 60 * 60 * 1000
 MONTHLY_REFRESH_MS = 24 * 60 * 60 * 1000
 
-app = Dash(__name__, suppress_callback_exceptions=True)
+app = Dash(__name__, suppress_callback_exceptions=True, assets_folder="Assets",
+           meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}])
 server = app.server
 app.title = "Soil Monitor Dashboard"
 
@@ -69,9 +72,8 @@ def fallback_make_card_shell(plant, dark=True):
         children="Loading...",
         style={
             **styles.get("card_shell", {}),
-            "width": "272px",
-            "minWidth": "272px",
-            "maxWidth": "272px",
+            "width": "100%",
+            "minWidth": "0",
             "boxSizing": "border-box",
         },
     )
@@ -177,41 +179,82 @@ def fallback_build_health_panel(health_state_data, used_fallback, dark=True, sho
     return html.Div(children, style={**styles["section"], "marginBottom": "16px"})
 
 
+def learning_status(plant):
+    points = calibration.references(plant)
+    lines = []
+    for kind, label in (("ready", "Ready to water"), ("watered", "Watered and drained")):
+        point = points.get(kind)
+        if point:
+            raw = f" · raw {point['raw']:.0f}" if point.get("raw") is not None else ""
+            lines.append(html.Div(f"{label}: {point['moisture']:.1f}%{raw} · 3-reading median"))
+        else:
+            lines.append(html.Div(f"{label}: not marked yet"))
+    if len(points) == 2:
+        try:
+            rule = calibration.suggested_rules(plant)
+            lines.append(html.P(f"Suggested starting points: water ≤ {rule['dry']}%, check below {rule['ideal_low']}%, upper reference {rule['ideal_high']}%. Apply when ready."))
+        except ValueError as exc:
+            lines.append(html.P(str(exc)))
+    return html.Div(lines)
+
+
+def build_learning_panel():
+    styles = theme_styles(True)
+    rows = []
+    for plant in plant_names:
+        rows.append(html.Div([
+            html.H3(f"{FEEDS[plant]['emoji']} {plant}"),
+            html.Div(learning_status(plant), id={"type": "learning-status", "plant": plant}, role="status", className="muted"),
+            html.Div([html.Button(label, id={"type": "learning-action", "plant": plant, "action": action},
+                                  n_clicks=0, style=styles["button"]) for action, label in
+                      (("ready", "Mark ready to water"), ("watered", "Mark watered & drained"),
+                       ("apply", "Apply suggested thresholds"), ("reset", "Clear reference points"))],
+                     style={"display": "flex", "flexWrap": "wrap", "gap": "8px", "marginTop": "12px"}),
+        ], className="rule-row"))
+    return html.Div([
+        html.H2("Teach this pot"),
+        html.P("Two marks during normal care; no manual number tuning. Keep each sensor at the same depth and position. Do not let a plant wilt or dry completely for this setup.", className="muted"),
+        html.Ol([
+            html.Li("When you would normally water, check the soil or pot weight and mark Ready to water before watering."),
+            html.Li("Water normally, let excess water drain, then wait for three steady sensor updates and mark Watered & drained."),
+            html.Li("Review and apply the suggested thresholds for that pot. The lower ideal limit uses a 25% buffer between your two marks; adjust later if needed."),
+        ], className="muted"),
+        html.P("Uses the median of three different feed readings from the last 30 minutes (about 10–15 minutes at the default update rate). A single repeated or stale reading cannot be used. References are saved on the server; re-teach after repotting, moving a probe, or changing ESP32 calibration.", className="muted"),
+        html.P("These are relative sensor percentages, not the soil's actual water content. This workflow learns watering decisions; it does not recalibrate the ESP32. If the two points are too close, the dashboard will ask you to check the sensor instead of inventing thresholds.", className="muted"),
+        *rows,
+    ])
+
+
 def fallback_build_settings_panel(rules_dict, dark=True, health_state_data=None, used_fallback=False):
     styles = theme_styles(dark)
     rows = []
-
     for plant in plant_names:
         rule = rules_dict.get(plant, DEFAULT_PLANT_RULES[plant])
-        rows.append(
-            html.Div(
-                [
-                    html.Div(plant, style={"fontWeight": "700", "minWidth": "160px"}),
-                    dcc.Input(id={"type": "dry-input", "plant": plant}, type="number", value=rule["dry"], min=0, max=100, step=1, style={"width": "90px"}),
-                    dcc.Input(id={"type": "ideal-low-input", "plant": plant}, type="number", value=rule["ideal_low"], min=0, max=100, step=1, style={"width": "90px"}),
-                    dcc.Input(id={"type": "ideal-high-input", "plant": plant}, type="number", value=rule["ideal_high"], min=0, max=100, step=1, style={"width": "90px"}),
-                ],
-                style={"display": "flex", "gap": "10px", "alignItems": "center", "flexWrap": "wrap", "marginBottom": "10px"},
-            )
-        )
-
-    return html.Div(
-        [
-            html.Div("Plant rules", style={"fontWeight": "700", "marginBottom": "12px", "fontSize": "1.05rem"}),
-            *rows,
-            html.Div(
-                [html.Button("Save rules", id="save-rules-button", n_clicks=0, style={"marginRight": "10px"}), html.Span(id="save-rules-status")],
-                style={"marginTop": "12px", "marginBottom": "16px"},
-            ),
-            html.Div(
-                [html.Button("Send ntfy test", id="ntfy-test-button", n_clicks=0, style={"marginRight": "10px"}), html.Span(id="ntfy-test-status")],
-                style={"marginBottom": "16px"},
-            ),
-            html.Div([html.A("Download CSV", href="/download-csv", target="_blank")], style={"marginBottom": "16px"}),
-            fallback_build_health_panel(health_state_data or health_state, used_fallback, dark=dark, show_details=True),
-        ],
-        style=styles["section"],
-    )
+        fields = []
+        for kind, key, label in (("dry-input", "dry", "Water at or below (%)"),
+                                 ("ideal-low-input", "ideal_low", "Ideal minimum (%)"),
+                                 ("ideal-high-input", "ideal_high", "Ideal maximum (%)")):
+            fields.append(html.Label([html.Span(label), dcc.Input(
+                id={"type": kind, "plant": plant}, type="number", value=rule[key],
+                min=0, max=100, step=1, className="rule-input")], className="rule-field"))
+        rows.append(html.Div([html.H3(f"{FEEDS[plant]['emoji']} {plant}"),
+                              html.Div(fields, className="rule-fields")], className="rule-row"))
+    return html.Div([
+        build_learning_panel(),
+        html.H2("Manual care preferences"),
+        html.P("Set moisture thresholds for each plant. Values are percentages from your sensor calibration.", className="muted"),
+        *rows,
+        html.Button("Save care preferences", id="save-rules-button", n_clicks=0, style=styles["button_primary"]),
+        html.Div(id="save-rules-status", role="status", className="save-status"),
+        html.H2("Notifications & data"),
+        html.P("All notifications are paused." if notifications.NOTIFICATIONS_PAUSED else "Notifications are active.", className="muted"),
+        html.Button("Send test notification", id="ntfy-test-button", n_clicks=0,
+                    disabled=notifications.NOTIFICATIONS_PAUSED, style=styles["button"]),
+        html.Span(id="ntfy-test-status", role="status"),
+        html.A("Download readings (.csv)", href="/download-csv", className="download-link"),
+        html.P(f"{get_csv_row_count():,} logged readings · Last write: {get_csv_last_write_time()}", className="muted"),
+        build_health_panel(health_state_data or health_state, used_fallback, dark=dark, show_details=True),
+    ], style=styles["section"])
 
 
 make_card_shell = getattr(ui_module, "make_card_shell", fallback_make_card_shell)
@@ -315,20 +358,14 @@ def format_reading_age(ts):
 
 
 def normalize_selected_plants(selected_plants, histories=None):
-    cleaned = [p for p in (selected_plants or []) if p in plant_names]
-    if cleaned:
-        return cleaned
-    if histories:
-        available = [p for p in plant_names if p in histories]
-        if available:
-            return available
-    return plant_names.copy()
+    if selected_plants is None:
+        return plant_names.copy()
+    return [p for p in selected_plants if p in plant_names]
 
 
 def filter_histories_by_selection(histories, selected_plants):
     chosen = normalize_selected_plants(selected_plants, histories)
-    filtered = {plant: histories[plant] for plant in chosen if plant in histories}
-    return filtered if filtered else histories
+    return {plant: histories[plant] for plant in chosen if plant in histories}
 
 
 def format_summary_timestamp(ts):
@@ -460,17 +497,19 @@ def build_shell(live_range=1):
         children=[
             html.Div(
                 style=styles["container"],
+                className="dashboard-container",
                 children=[
                     html.Div(
                         style=styles["header"],
-                        children=[html.Div([html.H1("Plant Soil Monitor", style={"margin": "0 0 8px 0", "fontSize": "2rem"}), html.P("Track moisture, temperature, watering, alerts, and trends in one place.", style={"margin": "0", "opacity": "0.92"})])],
+                        children=[html.Div([html.H1("Your plant collection", style={"margin": "0 0 8px 0", "fontSize": "2rem"}), html.P("A little clarity for every leaf. Moisture, temperature, and watering at a glance.", style={"margin": "0", "opacity": "0.92"})])],
                     ),
+                    html.Div("Notifications paused · Your ESP32 can stay unplugged. Alerts and summaries are muted." if notifications.NOTIFICATIONS_PAUSED else "Notifications active · Watching for dry plants and offline sensors.", className="notification-status", role="status"),
                     html.Div(id="system-status"),
                     html.Div(id="health-panel"),
                     html.Div(id="alert-banner"),
                     html.Div(
                         [make_card_shell(plant, dark=dark) for plant in plant_names],
-                        style={"display": "flex", "flexWrap": "wrap", "gap": "14px", "marginBottom": "18px", "justifyContent": "center", "alignItems": "stretch"},
+                        className="plant-grid",
                     ),
                     dcc.Tabs(
                         id="view-tabs",
@@ -536,7 +575,7 @@ def render_shell(live_range):
 )
 def update_selected_plants(selected, current):
     cleaned = normalize_selected_plants(selected)
-    return cleaned or current or plant_names
+    return cleaned
 
 
 @app.callback(Output("snapshot-store", "data"), Input("card-refresh", "n_intervals"))
@@ -629,6 +668,39 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
     return new_rules, "Rules saved on server; monitoring continues with the page closed."
 
 
+@app.callback(
+    Output({"type": "learning-status", "plant": ALL}, "children"),
+    Output("plant-rules-store", "data", allow_duplicate=True),
+    Input({"type": "learning-action", "plant": ALL, "action": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def learn_watering_points(clicks):
+    trigger = ctx.triggered_id
+    if not trigger or not any(clicks):
+        raise PreventUpdate
+    plant, action = trigger["plant"], trigger["action"]
+    message = ""
+    updated_rules = no_update
+    try:
+        if action == "apply":
+            rule = calibration.suggested_rules(plant)
+            rules = monitor.load_rules()
+            rules[plant] = rule
+            monitor.save_rules(rules)
+            updated_rules = rules
+            message = "Suggested thresholds saved. Manual values will update when Settings is reopened."
+        elif action == "reset":
+            calibration.reset(plant)
+            message = "Reference points cleared. Current thresholds are unchanged."
+        else:
+            calibration.capture(plant, action)
+            message = "Reference point saved. Thresholds change only when you Apply."
+    except (ValueError, OSError) as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "Could not save reference points; please try again."
+    statuses = [html.Div([learning_status(p), html.P(message) if p == plant else None]) for p in plant_names]
+    return statuses, updated_rules
+
+
 @app.callback(Output("ntfy-test-status", "children"), Input("ntfy-test-button", "n_clicks"), prevent_initial_call=True)
 def send_test_notification(n_clicks):
     ok = send_ntfy_alert(
@@ -695,7 +767,7 @@ def update_cards(snapshot_data, history24_data, rules_dict):
 
             trend = compute_trend_arrow(hist_m)
             eta_hours = estimate_hours_until_dry(hist_times, hist_m, rules_dict[plant]["dry"])
-            eta_text = "Dry ETA: unknown" if eta_hours is None else f"Dry ETA: ~{eta_hours:.1f} hr"
+            eta_text = "Dry estimate unavailable for an offline sensor" if offline else ("Dry estimate: gathering trend data" if eta_hours is None else f"Estimated dry in ~{eta_hours:.1f} hr")
 
             successful_fetches += 1
             last_update = ts.astimezone(LOCAL_TZ).strftime("%m/%d %I:%M %p") if ts else "--"
@@ -712,8 +784,8 @@ def update_cards(snapshot_data, history24_data, rules_dict):
                     ),
                     html.Div(
                         [
-                            html.Div([html.Div(" Moisture", style={"color": styles["subtext"], "fontSize": "0.85rem"}), html.Div(f"{moisture:.1f}% {trend}", style={"fontSize": "1.25rem", "fontWeight": "700"})], style={"flex": "1"}),
-                            html.Div([html.Div(" Temp", style={"color": styles["subtext"], "fontSize": "0.85rem"}), html.Div(f"{min(temp_f, TEMP_F_MAX):.1f}°F", style={"fontSize": "1.25rem", "fontWeight": "700"})], style={"flex": "1"}),
+                            html.Div([html.Div("Last moisture" if offline else "Moisture", style={"color": styles["subtext"], "fontSize": "0.85rem"}), html.Div(f"{moisture:.1f}% {trend if not offline else '· stale'}", style={"fontSize": "1.25rem", "fontWeight": "700"})], style={"flex": "1"}),
+                            html.Div([html.Div("Last temperature" if offline else "Temperature", style={"color": styles["subtext"], "fontSize": "0.85rem"}), html.Div(f"{min(temp_f, TEMP_F_MAX):.1f}°F", style={"fontSize": "1.25rem", "fontWeight": "700"})], style={"flex": "1"}),
                         ],
                         style={"display": "flex", "gap": "12px", "marginBottom": "12px"},
                     ),
@@ -733,9 +805,9 @@ def update_cards(snapshot_data, history24_data, rules_dict):
             card = html.Div(
                 [
                     html.H3(f"{meta['emoji']} {plant}", style={"marginTop": "0"}),
-                    html.Div("No data", style={"fontWeight": "700", "color": styles["subtext"], "marginBottom": "10px"}),
+                    html.Div("Waiting for sensor", style={"fontWeight": "700", "color": styles["subtext"], "marginBottom": "10px"}),
                     html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
-                    html.Div("Reading age: unavailable", style={"marginBottom": "8px", "fontSize": "0.92rem"}),
+                    html.Div("Connect the ESP32 to begin receiving readings.", style={"marginBottom": "8px", "fontSize": "0.92rem"}),
                     html.Div("Last update: --", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
                 ],
                 style={"backgroundColor": styles["status_bg"]["nodata"], "border": f"2px solid {styles['status_border']['nodata']}", "borderRadius": "18px", "padding": "16px", "minHeight": "275px", "color": styles["text"], "height": "100%", "boxSizing": "border-box"},
@@ -746,22 +818,20 @@ def update_cards(snapshot_data, history24_data, rules_dict):
             latest_snapshot[plant] = {"moisture": None, "temp_f": None, "recommendation": "No data", "offline": True}
 
 
-    order_rank.sort(key=lambda x: (x[0], x[1], x[2]))
+    # Keep each callback output aligned with its named plant card.
     cards = [item[3] for item in order_rank]
 
     refresh_text = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %I:%M:%S %p")
     system_status = html.Div(
         [
-            html.Div(f"Last refresh: {refresh_text}", style=styles["chip"]),
-            html.Div(f"Plants fetched: {successful_fetches}/{len(FEEDS)}", style=styles["chip"]),
-            html.Div(f"CSV rows: {get_csv_row_count()}", style=styles["chip"]),
-            html.Div(f"CSV last write: {get_csv_last_write_time()}", style=styles["chip"]),
-            html.Div(f"CSV: {last_csv_status}", style=styles["chip"]),
-        ],
-        style={**styles["section"], "marginBottom": "16px"},
+            html.Div([html.Span("Connected sensors", className="metric-label"), html.Strong(f"{len(FEEDS) - len(offline_alerts)} / {len(FEEDS)}", className="metric-value")]),
+            html.Div([html.Span("Need water", className="metric-label"), html.Strong(str(len(dry_alerts)), className="metric-value")]),
+            html.Div([html.Span("Data source", className="metric-label"), html.Strong("Cached readings" if used_fallback else ("Adafruit IO" if snapshot else "Waiting for readings"), className="metric-value")]),
+            html.Div([html.Span("Dashboard updated", className="metric-label"), html.Strong(datetime.now(LOCAL_TZ).strftime("%I:%M %p"), className="metric-value")]),
+        ], className="overview-grid", style={**styles["section"], "marginBottom": "16px"},
     )
 
-    health_panel = build_health_panel(health_state, used_fallback, dark=dark, show_details=False)
+    health_panel = html.Div()
 
     alert_styles = {
         "mixed": {"backgroundColor": "#3a2814", "color": "#ffd089", "border": "1px solid #7a5b22"},
@@ -770,7 +840,9 @@ def update_cards(snapshot_data, history24_data, rules_dict):
         "ok": {"backgroundColor": "#113222", "color": "#7ff0b2", "border": "1px solid #2e8b57"},
     }
 
-    if offline_alerts and dry_alerts:
+    if notifications.NOTIFICATIONS_PAUSED and len(offline_alerts) == len(FEEDS):
+        alert_banner = html.Div("Waiting for your ESP32. Historical readings remain available; notifications are paused.", role="status", style={**alert_styles["offline"], "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px"})
+    elif offline_alerts and dry_alerts:
         alert_banner = html.Div([html.Div(f"Offline sensors: {', '.join(offline_alerts)}"), html.Div(f"Water alerts: {', '.join(dry_alerts)}", style={"marginTop": "6px"})], style={**alert_styles["mixed"], "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"})
     elif offline_alerts:
         alert_banner = html.Div(f"Offline sensors: {', '.join(offline_alerts)}", style={**alert_styles["offline"], "padding": "14px 18px", "borderRadius": "16px", "marginBottom": "16px", "fontWeight": "700"})
