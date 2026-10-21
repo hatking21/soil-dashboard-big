@@ -126,3 +126,44 @@ and persistent paths configured via the environment variables above.
 
 Validation: `python -m unittest -v test_monitor`. Tests mock external services;
 real Adafruit/ntfy credentials are not needed.
+
+## Learn watering thresholds during normal care
+
+In Settings, use **Teach this pot** for each plant:
+
+1. Leave the probe at a consistent depth and position. When the pot reaches
+   the point where you normally water (check the soil or pot weight), select
+   **Mark ready to water** before watering. Do not deliberately stress the plant.
+2. Water normally and let excess water drain. After three steady feed updates,
+   select **Mark watered & drained**. With five-minute updates, sampling takes
+   about 10–15 minutes without any further interaction.
+3. Review the suggested values, then select **Apply suggested thresholds**.
+   This affects only that plant. Manual thresholds remain available.
+
+Each mark uses the median of three distinct samples from the preceding
+30 minutes. Samples for the second mark must be newer than the first mark.
+Cached API fallbacks, missing/invalid values and duplicate timestamps do not
+add samples. Stale samples and spreads above five percentage points block
+capture. A wet/dry span below five points, including a reversed span, blocks
+application and suggests checking placement or ESP32 calibration.
+
+The ready-to-water value becomes the dry threshold; the watered-and-drained
+value becomes the upper reference. The lower ideal threshold uses a suggested
+25% buffer across that span. This is an adjustable starting rule, not a
+species-specific ideal range. The reference display includes raw sensor values
+when available to help troubleshoot compressed or saturated percentages.
+
+STEMMA readings are capacitive measurements, not measured volumetric water
+content. The dashboard currently receives `moisture_pct` from the ESP32; this
+workflow learns watering reference points on that existing scale and does not
+recalibrate firmware or rewrite historic readings. Adafruit explains the
+measurement limitation at
+https://learn.adafruit.com/adafruit-stemma-soil-sensor-i2c-capacitive-moisture-sensor/faq.
+
+Use **Clear reference points** and repeat after repotting, moving a probe or
+changing firmware calibration. Clearing references also discards the sampling
+buffer but leaves applied thresholds unchanged. Samples and reference points
+are saved under `CACHE_DIR`; they require persistent storage to survive host
+replacement. Notifications stay paused independently of this feature.
+
+Validation: `python -m unittest -v test_dashboard test_monitor test_calibration`.

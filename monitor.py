@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from config import CACHE_DIR, CARD_REFRESH_MS, DEFAULT_PLANT_RULES, FEEDS, SENSOR_OFFLINE_MINUTES
 import data_layer as data
 import notifications as notifications
+import calibration
 
 lock = threading.RLock()
 _stop = threading.Event()
@@ -41,6 +42,11 @@ def snapshot_for_browser():
 def poll_once():
     global _snapshot
     snapshot, fallback = data.fetch_latest_snapshot()
+    # Reference sampling is independent of CSV change-based logging.
+    try:
+        calibration.record_snapshot(snapshot, fallback)
+    except (OSError, ValueError):
+        logging.exception("Could not save watering reference samples")
     rules = load_rules()
     summary = {}
     for plant in FEEDS:

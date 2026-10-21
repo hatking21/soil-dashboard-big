@@ -14,7 +14,7 @@ class MonitorTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        for target in ('monitor.CACHE_DIR', 'data_layer.CACHE_DIR'):
+        for target in ('monitor.CACHE_DIR', 'data_layer.CACHE_DIR', 'calibration.CACHE_DIR'):
             p = patch(target, self.tmp.name)
             p.start()
             self.addCleanup(p.stop)

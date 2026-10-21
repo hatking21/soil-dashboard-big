@@ -24,6 +24,11 @@ class DashboardTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 response.close()
 
+    def test_learning_settings_load_without_sensor_data(self):
+        panel = app.fallback_build_settings_panel(DEFAULT_PLANT_RULES)
+        self.assertIn("Teach this pot", str(panel))
+        self.assertIn("not marked yet", str(panel))
+
     def test_unchecking_all_plants_shows_no_traces(self):
         self.assertEqual(app.filter_histories_by_selection({'Peace Lily': {}}, []), {})
         fig, _ = build_figures({}, DEFAULT_PLANT_RULES)

@@ -37,6 +37,7 @@ from styles import theme_styles
 import ui as ui_module
 import monitor
 import notifications
+import calibration
 
 # Weekly refresh every hour, monthly refresh every day
 WEEKLY_REFRESH_MS = 60 * 60 * 1000
@@ -178,6 +179,52 @@ def fallback_build_health_panel(health_state_data, used_fallback, dark=True, sho
     return html.Div(children, style={**styles["section"], "marginBottom": "16px"})
 
 
+def learning_status(plant):
+    points = calibration.references(plant)
+    lines = []
+    for kind, label in (("ready", "Ready to water"), ("watered", "Watered and drained")):
+        point = points.get(kind)
+        if point:
+            raw = f" · raw {point['raw']:.0f}" if point.get("raw") is not None else ""
+            lines.append(html.Div(f"{label}: {point['moisture']:.1f}%{raw} · 3-reading median"))
+        else:
+            lines.append(html.Div(f"{label}: not marked yet"))
+    if len(points) == 2:
+        try:
+            rule = calibration.suggested_rules(plant)
+            lines.append(html.P(f"Suggested starting points: water ≤ {rule['dry']}%, check below {rule['ideal_low']}%, upper reference {rule['ideal_high']}%. Apply when ready."))
+        except ValueError as exc:
+            lines.append(html.P(str(exc)))
+    return html.Div(lines)
+
+
+def build_learning_panel():
+    styles = theme_styles(True)
+    rows = []
+    for plant in plant_names:
+        rows.append(html.Div([
+            html.H3(f"{FEEDS[plant]['emoji']} {plant}"),
+            html.Div(learning_status(plant), id={"type": "learning-status", "plant": plant}, role="status", className="muted"),
+            html.Div([html.Button(label, id={"type": "learning-action", "plant": plant, "action": action},
+                                  n_clicks=0, style=styles["button"]) for action, label in
+                      (("ready", "Mark ready to water"), ("watered", "Mark watered & drained"),
+                       ("apply", "Apply suggested thresholds"), ("reset", "Clear reference points"))],
+                     style={"display": "flex", "flexWrap": "wrap", "gap": "8px", "marginTop": "12px"}),
+        ], className="rule-row"))
+    return html.Div([
+        html.H2("Teach this pot"),
+        html.P("Two marks during normal care; no manual number tuning. Keep each sensor at the same depth and position. Do not let a plant wilt or dry completely for this setup.", className="muted"),
+        html.Ol([
+            html.Li("When you would normally water, check the soil or pot weight and mark Ready to water before watering."),
+            html.Li("Water normally, let excess water drain, then wait for three steady sensor updates and mark Watered & drained."),
+            html.Li("Review and apply the suggested thresholds for that pot. The lower ideal limit uses a 25% buffer between your two marks; adjust later if needed."),
+        ], className="muted"),
+        html.P("Uses the median of three different feed readings from the last 30 minutes (about 10–15 minutes at the default update rate). A single repeated or stale reading cannot be used. References are saved on the server; re-teach after repotting, moving a probe, or changing ESP32 calibration.", className="muted"),
+        html.P("These are relative sensor percentages, not the soil's actual water content. This workflow learns watering decisions; it does not recalibrate the ESP32. If the two points are too close, the dashboard will ask you to check the sensor instead of inventing thresholds.", className="muted"),
+        *rows,
+    ])
+
+
 def fallback_build_settings_panel(rules_dict, dark=True, health_state_data=None, used_fallback=False):
     styles = theme_styles(dark)
     rows = []
@@ -193,7 +240,8 @@ def fallback_build_settings_panel(rules_dict, dark=True, health_state_data=None,
         rows.append(html.Div([html.H3(f"{FEEDS[plant]['emoji']} {plant}"),
                               html.Div(fields, className="rule-fields")], className="rule-row"))
     return html.Div([
-        html.H2("Care preferences"),
+        build_learning_panel(),
+        html.H2("Manual care preferences"),
         html.P("Set moisture thresholds for each plant. Values are percentages from your sensor calibration.", className="muted"),
         *rows,
         html.Button("Save care preferences", id="save-rules-button", n_clicks=0, style=styles["button_primary"]),
@@ -618,6 +666,39 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
     except OSError:
         return no_update, "Could not save rules on the server. Please try again."
     return new_rules, "Rules saved on server; monitoring continues with the page closed."
+
+
+@app.callback(
+    Output({"type": "learning-status", "plant": ALL}, "children"),
+    Output("plant-rules-store", "data", allow_duplicate=True),
+    Input({"type": "learning-action", "plant": ALL, "action": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def learn_watering_points(clicks):
+    trigger = ctx.triggered_id
+    if not trigger or not any(clicks):
+        raise PreventUpdate
+    plant, action = trigger["plant"], trigger["action"]
+    message = ""
+    updated_rules = no_update
+    try:
+        if action == "apply":
+            rule = calibration.suggested_rules(plant)
+            rules = monitor.load_rules()
+            rules[plant] = rule
+            monitor.save_rules(rules)
+            updated_rules = rules
+            message = "Suggested thresholds saved. Manual values will update when Settings is reopened."
+        elif action == "reset":
+            calibration.reset(plant)
+            message = "Reference points cleared. Current thresholds are unchanged."
+        else:
+            calibration.capture(plant, action)
+            message = "Reference point saved. Thresholds change only when you Apply."
+    except (ValueError, OSError) as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "Could not save reference points; please try again."
+    statuses = [html.Div([learning_status(p), html.P(message) if p == plant else None]) for p in plant_names]
+    return statuses, updated_rules
 
 
 @app.callback(Output("ntfy-test-status", "children"), Input("ntfy-test-button", "n_clicks"), prevent_initial_call=True)
