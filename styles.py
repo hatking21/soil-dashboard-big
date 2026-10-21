@@ -67,7 +67,7 @@ def theme_styles(_dark: bool = True):
 
     return {
         "page": {
-            "fontFamily": "Arial, sans-serif",
+            "fontFamily": "Inter, ui-sans-serif, system-ui, -apple-system, sans-serif",
             "background": page_bg,
             "minHeight": "100vh",
             "padding": "0",
@@ -96,7 +96,7 @@ def theme_styles(_dark: bool = True):
             "boxShadow": "0 6px 20px rgba(0,0,0,0.08)",
         },
         "card_shell": {
-            "width": "272px",
+            "width": "100%",
             "borderRadius": "18px",
             "backgroundColor": card_shell_bg,
             "boxShadow": "0 10px 24px rgba(0,0,0,0.12)",
