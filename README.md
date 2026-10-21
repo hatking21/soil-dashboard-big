@@ -11,7 +11,7 @@ This dashboard shows:
 - offline sensor detection
 - CSV logging and CSV download
 - ntfy alerts for dry plants, offline sensors, and a daily summary
-- browser-saved moisture thresholds for each plant
+- server-saved moisture thresholds for each plant
 
 ## Current dashboard structure
 
@@ -87,3 +87,42 @@ Good next additions would be:
 - per-plant notification cooldowns
 - calibration tools for each sensor
 - a compact mobile-first card layout
+
+## Monitoring with the browser closed
+
+`monitor.py` polls Adafruit IO every `CARD_REFRESH_MS` (default five minutes).
+It owns CSV logging, watering detection, offline/dry alerts, and the daily
+summary. Dash callbacks only display the results. The ESP32 must remain powered
+and connected to Wi-Fi; your computer and browser can be off.
+
+Gunicorn starts the monitor with `gunicorn.conf.py`. Use exactly one worker and
+one service instance, without preload, to avoid duplicate collectors. Local
+`python app.py` also starts it, but stops when that computer/process stops.
+
+### Runtime requirements and verification
+
+This change leaves `render.yaml` and hosting settings unchanged. Continuous
+monitoring requires the application process to remain running; it cannot run
+while its host is sleeping or powered off. Saved data survives restarts only
+when the configured CSV and cache paths use persistent storage.
+
+1. After starting the app, open Settings and save your preferred plant rules
+   once. Old browser-only rules are not automatically migrated. All browsers
+   now share these rules, and a new page load reads the server copy.
+2. Close every dashboard tab for at least two polling intervals. Reopen it and
+   verify recent CSV timestamps; use a safe temporary dry threshold to test an
+   ntfy alert while the page is closed, then restore it.
+
+Notification transition flags and the daily-summary date are saved on disk so
+normal restarts do not repeat already delivered alerts. Failed/rate-limited
+alerts are retried next cycle. A crash between sending and saving can still
+repeat an alert. Startup begins with current feed values, not a backfill of
+readings missed during downtime; watering detection needs consecutive samples.
+History charts still load on demand from Adafruit IO.
+
+If you prefer no cloud hosting charge, run this process as a boot-time service
+on an existing always-on Raspberry Pi instead; it still needs power, Internet,
+and persistent paths configured via the environment variables above.
+
+Validation: `python -m unittest -v test_monitor`. Tests mock external services;
+real Adafruit/ntfy credentials are not needed.

@@ -19,30 +19,23 @@ from data_layer import (
     ensure_csv_exists,
     ensure_watering_log_exists,
     fetch_history,
-    fetch_latest_snapshot,
     format_last_watered,
     get_csv_last_write_time,
     get_csv_row_count,
     health_state,
     is_sensor_offline,
     load_last_watered_from_csv,
-    log_to_csv,
     run_startup_checks,
-    should_log_reading,
-    update_last_watered_if_needed,
     compute_trend_arrow,
     estimate_hours_until_dry,
     last_csv_status,
 )
 from notifications import (
-    init_notification_state,
-    maybe_send_daily_summary,
-    maybe_send_offline_alert,
-    maybe_send_urgent_alert,
     send_ntfy_alert,
 )
 from styles import theme_styles
 import ui as ui_module
+import monitor
 
 # Weekly refresh every hour, monthly refresh every day
 WEEKLY_REFRESH_MS = 60 * 60 * 1000
@@ -66,7 +59,6 @@ def download_csv():
     )
 
 
-init_notification_state(plant_names)
 run_startup_checks()
 
 
@@ -505,26 +497,30 @@ def build_shell(live_range=1):
     )
 
 
-app.layout = html.Div(
-    id="page-root",
-    className="app-dark",
-    children=[
-        dcc.Store(id="plant-rules-store", storage_type="local", data=DEFAULT_PLANT_RULES),
-        dcc.Store(id="live-range-store", storage_type="memory", data=1),
-        dcc.Store(id="selected-plants-store", storage_type="local", data=plant_names),
-        dcc.Store(id="snapshot-store"),
-        dcc.Store(id="history-1-store"),
-        dcc.Store(id="history-6-store"),
-        dcc.Store(id="history-24-store"),
-        dcc.Store(id="history-7-store"),
-        dcc.Store(id="history-30-store"),
-        dcc.Interval(id="card-refresh", interval=CARD_REFRESH_MS, n_intervals=0),
-        dcc.Interval(id="history-fast-refresh", interval=HISTORY_FAST_REFRESH_MS, n_intervals=0),
-        dcc.Interval(id="history-7-refresh", interval=WEEKLY_REFRESH_MS, n_intervals=0, disabled=True),
-        dcc.Interval(id="history-30-refresh", interval=MONTHLY_REFRESH_MS, n_intervals=0, disabled=True),
-        html.Div(id="app-shell", children=build_shell(1)),
-    ],
-)
+def serve_layout():
+    return html.Div(
+        id="page-root",
+        className="app-dark",
+        children=[
+            dcc.Store(id="plant-rules-store", storage_type="memory", data=monitor.load_rules()),
+            dcc.Store(id="live-range-store", storage_type="memory", data=1),
+            dcc.Store(id="selected-plants-store", storage_type="local", data=plant_names),
+            dcc.Store(id="snapshot-store"),
+            dcc.Store(id="history-1-store"),
+            dcc.Store(id="history-6-store"),
+            dcc.Store(id="history-24-store"),
+            dcc.Store(id="history-7-store"),
+            dcc.Store(id="history-30-store"),
+            dcc.Interval(id="card-refresh", interval=CARD_REFRESH_MS, n_intervals=0),
+            dcc.Interval(id="history-fast-refresh", interval=HISTORY_FAST_REFRESH_MS, n_intervals=0),
+            dcc.Interval(id="history-7-refresh", interval=WEEKLY_REFRESH_MS, n_intervals=0, disabled=True),
+            dcc.Interval(id="history-30-refresh", interval=MONTHLY_REFRESH_MS, n_intervals=0, disabled=True),
+            html.Div(id="app-shell", children=build_shell(1)),
+        ],
+    )
+
+
+app.layout = serve_layout
 
 
 @app.callback(Output("app-shell", "children"), Input("live-range-store", "data"))
@@ -545,8 +541,7 @@ def update_selected_plants(selected, current):
 
 @app.callback(Output("snapshot-store", "data"), Input("card-refresh", "n_intervals"))
 def refresh_snapshot(n):
-    snapshot, used_fallback = fetch_latest_snapshot()
-    return {"snapshot": snapshot, "used_fallback": used_fallback}
+    return monitor.snapshot_for_browser()
 
 
 @app.callback(
@@ -627,8 +622,11 @@ def save_rules(n_clicks, dry_values, low_values, high_values):
         if not (0 <= dry <= low <= high <= 100):
             return no_update, f"Invalid values for {plant}. Must satisfy dry ≤ ideal low ≤ ideal high."
         new_rules[plant] = {"dry": dry, "ideal_low": low, "ideal_high": high}
-    init_notification_state(plant_names)
-    return new_rules, "Rules saved."
+    try:
+        monitor.save_rules(new_rules)
+    except OSError:
+        return no_update, "Could not save rules on the server. Please try again."
+    return new_rules, "Rules saved on server; monitoring continues with the page closed."
 
 
 @app.callback(Output("ntfy-test-status", "children"), Input("ntfy-test-button", "n_clicks"), prevent_initial_call=True)
@@ -650,6 +648,7 @@ def send_test_notification(n_clicks):
 def update_cards(snapshot_data, history24_data, rules_dict):
     dark = True
     styles = theme_styles(dark)
+    rules_dict = monitor.load_rules()
 
     snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
     snapshot = snapshot_data.get("snapshot", {})
@@ -673,20 +672,12 @@ def update_cards(snapshot_data, history24_data, rules_dict):
             ts = datetime.fromisoformat(row["timestamp"]) if row.get("timestamp") else None
 
             offline = is_sensor_offline(ts)
-            maybe_send_offline_alert(plant, offline, ts, SENSOR_OFFLINE_MINUTES)
-            update_last_watered_if_needed(plant, moisture, ts, offline)
 
             rec, rec_color, bg_color = moisture_colors(moisture, rules_dict[plant], dark=dark)
             if offline:
                 rec, rec_color, bg_color = moisture_colors(None, rules_dict[plant], dark=dark, offline=True)
 
             latest_snapshot[plant] = {"moisture": moisture, "temp_f": temp_f, "recommendation": rec, "offline": offline}
-
-            if should_log_reading(plant, moisture):
-                log_to_csv(timestamp=ts or datetime.now(timezone.utc), plant=plant, moisture=moisture, temp_f=temp_f, raw=raw, recommendation=rec, sensor_offline=offline)
-
-            if not offline:
-                maybe_send_urgent_alert(plant, moisture, rec)
 
             if rec == "Water now" and not offline:
                 dry_alerts.append(plant)
@@ -754,7 +745,6 @@ def update_cards(snapshot_data, history24_data, rules_dict):
             offline_alerts.append(plant)
             latest_snapshot[plant] = {"moisture": None, "temp_f": None, "recommendation": "No data", "offline": True}
 
-    maybe_send_daily_summary(latest_snapshot)
 
     order_rank.sort(key=lambda x: (x[0], x[1], x[2]))
     cards = [item[3] for item in order_rank]
@@ -824,6 +814,7 @@ def toggle_live_range_visibility(tab):
     Input("plant-rules-store", "data"),
 )
 def render_tab(tab, live_range, selected_plants, h1, h6, h24, h7, h30, snapshot_data, rules_dict):
+    rules_dict = monitor.load_rules()
     dark = True
     styles = theme_styles(dark)
 
@@ -854,4 +845,5 @@ if __name__ == "__main__":
     ensure_watering_log_exists()
     load_last_watered_from_csv()
     run_startup_checks()
+    monitor.start()
     app.run(host="0.0.0.0", port=10000, debug=False)

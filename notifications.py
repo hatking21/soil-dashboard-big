@@ -52,7 +52,7 @@ def maybe_send_offline_alert(plant, is_offline, timestamp, offline_minutes):
         else:
             age_text = "unknown"
 
-        send_ntfy_alert(
+        if not send_ntfy_alert(
             title=f"Sensor offline: {plant}",
             message=(
                 f"No recent sensor update for {plant}.\n\n"
@@ -61,7 +61,8 @@ def maybe_send_offline_alert(plant, is_offline, timestamp, offline_minutes):
             ),
             priority="high",
             tags=["warning", "satellite"],
-        )
+        ):
+            return
 
     offline_alert_state[plant] = is_offline
 
@@ -71,12 +72,13 @@ def maybe_send_urgent_alert(plant, moisture, recommendation):
     is_alerting = recommendation == "Water now"
 
     if is_alerting and not was_alerting:
-        send_ntfy_alert(
+        if not send_ntfy_alert(
             title=f"Water alert: {plant}",
             message=f"{plant} is dry.\n\nMoisture: {moisture:.1f}%\nRecommendation: Water now",
             priority="high",
             tags=["warning", "seedling"],
-        )
+        ):
+            return
 
     alert_state[plant] = is_alerting
 
