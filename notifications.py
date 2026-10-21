@@ -3,6 +3,10 @@ import requests
 
 from config import LOCAL_TZ, NTFY_BASE_URL, NTFY_MIN_INTERVAL, NTFY_TOPIC
 
+# Temporary global pause while the ESP32 is unplugged.
+# Set to False to resume all notifications.
+NOTIFICATIONS_PAUSED = True
+
 last_ntfy_sent_at = None
 last_daily_summary_date = None
 alert_state = {}
@@ -18,7 +22,7 @@ def init_notification_state(plants):
 def send_ntfy_alert(title, message, priority="default", tags=None):
     global last_ntfy_sent_at
 
-    if not NTFY_TOPIC:
+    if NOTIFICATIONS_PAUSED or not NTFY_TOPIC:
         return False
 
     now = datetime.now(timezone.utc)
