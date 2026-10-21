@@ -99,29 +99,17 @@ Gunicorn starts the monitor with `gunicorn.conf.py`. Use exactly one worker and
 one service instance, without preload, to avoid duplicate collectors. Local
 `python app.py` also starts it, but stops when that computer/process stops.
 
-### Render deployment
+### Runtime requirements and verification
 
-The Blueprint in `render.yaml` proposes a **paid Starter web service** and a
-1 GB persistent disk. Applying it can incur hosting and disk charges. This PR
-does not change your running Render account. Free Render web services sleep
-without incoming traffic, so a background thread alone cannot keep a free
-service monitoring continuously. See https://render.com/docs/free.
+This change leaves `render.yaml` and hosting settings unchanged. Continuous
+monitoring requires the application process to remain running; it cannot run
+while its host is sleeping or powered off. Saved data survives restarts only
+when the configured CSV and cache paths use persistent storage.
 
-For an existing manually configured service, set these in Render yourself
-(changing this file does not necessarily update a manually created service):
-
-1. Choose an always-on paid instance and attach a persistent disk at `/var/data`.
-2. Set the start command to `gunicorn --config gunicorn.conf.py app:server`.
-3. Keep `AIO_USERNAME`, `AIO_KEY`, and `NTFY_TOPIC` configured. Set `CSV_LOG_PATH`
-   to `/var/data/plant_readings.csv`, `WATERING_LOG_PATH` to
-   `/var/data/watering_events.csv`, `ERROR_LOG_PATH` to
-   `/var/data/dashboard_errors.csv`, and `CACHE_DIR` to `/var/data/cache`.
-4. Back up any existing CSVs before redeploying and copy them to the new disk if
-   you want to retain them. Files on the old ephemeral filesystem are not migrated.
-5. After deploy, open Settings and save your preferred plant rules once. Old
-   browser-only rules are not automatically migrated. All browsers now share
-   these rules, and a new page load reads the server copy.
-6. Close every dashboard tab for at least two polling intervals. Reopen it and
+1. After starting the app, open Settings and save your preferred plant rules
+   once. Old browser-only rules are not automatically migrated. All browsers
+   now share these rules, and a new page load reads the server copy.
+2. Close every dashboard tab for at least two polling intervals. Reopen it and
    verify recent CSV timestamps; use a safe temporary dry threshold to test an
    ntfy alert while the page is closed, then restore it.
 
