@@ -129,7 +129,7 @@ real Adafruit/ntfy credentials are not needed.
 
 ## Learn watering thresholds during normal care
 
-In Settings, use **Teach this pot** for each plant:
+In Plant care, expand **Teach this pot · guided setup** for each plant:
 
 1. Leave the probe at a consistent depth and position. When the pot reaches
    the point where you normally water (check the soil or pot weight), select
@@ -167,3 +167,21 @@ are saved under `CACHE_DIR`; they require persistent storage to survive host
 replacement. Notifications stay paused independently of this feature.
 
 Validation: `python -m unittest -v test_dashboard test_monitor test_calibration`.
+
+
+## Dashboard experience
+
+The overview uses a botanical dark theme, larger moisture readings and neutral
+plant cards with status accents. Each card shows its ideal range and watering
+threshold on the moisture track; offline readings are labeled as stale. Expand
+**Sensor details** for raw readings, exact update time and the dry estimate.
+
+Use **Recent**, **Weekly** or **Monthly** to explore charts. The time-range
+buttons update without rebuilding the page, and chart filters have larger touch
+targets. **Plant care** contains manual thresholds, expandable guided setup,
+notifications and CSV export. Background refreshes leave in-progress care edits
+and action feedback intact; reopen Plant care to reload saved thresholds.
+
+Layout adapts from four plant columns to two on tablets and one on phones.
+Controls have visible keyboard focus, reduced-motion support and readable
+status labels. Notifications retain their existing pause setting.

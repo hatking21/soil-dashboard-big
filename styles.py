@@ -1,33 +1,33 @@
 def theme_styles(_dark: bool = True):
-    page_bg = "#071224"
-    panel_bg = "rgba(10, 20, 38, 0.94)"
-    text = "#eef4fb"
-    subtext = "#a7b4c6"
-    border = "rgba(148, 163, 184, 0.18)"
+    page_bg = "#0c1513"
+    panel_bg = "#121f1a"
+    text = "#edf5f1"
+    subtext = "#adbbb5"
+    border = "#304238"
 
-    card_shell_bg = "#0b1628"
-    chip_bg = "#162235"
-    plot_bg = "#0b1628"
-    input_bg = "#0f1c31"
-    input_text = "#eef4fb"
+    card_shell_bg = "#121f1a"
+    chip_bg = "#1d3027"
+    plot_bg = "#121f1a"
+    input_bg = "#13231c"
+    input_text = "#edf5f1"
 
-    header_grad = "linear-gradient(135deg, #16645a 0%, #235c8a 100%)"
+    header_grad = "linear-gradient(125deg, #1c3d2c 0%, #14271f 70%)"
 
-    tab_bg = "#12233b"
-    tab_selected = "#27486d"
+    tab_bg = "#14271f"
+    tab_selected = "#2b4b37"
 
-    button_bg = "#162235"
-    button_text = "#eef4fb"
-    button_primary_bg = "#1d3557"
+    button_bg = "#1d3027"
+    button_text = "#edf5f1"
+    button_primary_bg = "#284b36"
     button_primary_text = "#f8fbff"
-    button_primary_border = "#4ea3ff"
+    button_primary_border = "#a8cd8c"
 
-    range_button_bg = "#12233b"
+    range_button_bg = "#14271f"
     range_button_text = "#dce9f6"
-    range_button_border = "#355b87"
-    range_button_active_bg = "#1d3557"
+    range_button_border = "#365541"
+    range_button_active_bg = "#284b36"
     range_button_active_text = "#ffffff"
-    range_button_active_border = "#4ea3ff"
+    range_button_active_border = "#a8cd8c"
 
     status_bg = {
         "dry": "#3a1318",
@@ -63,7 +63,7 @@ def theme_styles(_dark: bool = True):
         "nodata": "#c2ccd8",
     }
 
-    bar_track = "#24354d"
+    bar_track = "#304238"
 
     return {
         "page": {
@@ -74,7 +74,7 @@ def theme_styles(_dark: bool = True):
             "color": text,
         },
         "container": {
-            "maxWidth": "1280px",
+            "maxWidth": "1440px",
             "margin": "0 auto",
             "padding": "24px",
             "boxSizing": "border-box",
@@ -92,7 +92,7 @@ def theme_styles(_dark: bool = True):
             "backdropFilter": "blur(6px)",
             "border": f"1px solid {border}",
             "borderRadius": "18px",
-            "padding": "16px",
+            "padding": "20px",
             "boxShadow": "0 6px 20px rgba(0,0,0,0.08)",
         },
         "card_shell": {
@@ -104,7 +104,8 @@ def theme_styles(_dark: bool = True):
             "overflow": "hidden",
         },
         "button": {
-            "padding": "10px 16px",
+            "padding": "12px 16px",
+            "minHeight": "44px",
             "borderRadius": "12px",
             "border": f"1px solid {border}",
             "cursor": "pointer",
@@ -114,7 +115,8 @@ def theme_styles(_dark: bool = True):
             "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
         },
         "button_primary": {
-            "padding": "10px 16px",
+            "padding": "12px 16px",
+            "minHeight": "44px",
             "borderRadius": "12px",
             "border": f"1px solid {button_primary_border}",
             "cursor": "pointer",
@@ -124,7 +126,8 @@ def theme_styles(_dark: bool = True):
             "boxShadow": "0 6px 18px rgba(0,0,0,0.18)",
         },
         "range_button": {
-            "padding": "10px 16px",
+            "padding": "12px 16px",
+            "minHeight": "44px",
             "borderRadius": "12px",
             "border": f"1px solid {range_button_border}",
             "cursor": "pointer",
@@ -134,7 +137,8 @@ def theme_styles(_dark: bool = True):
             "boxShadow": "0 2px 8px rgba(0,0,0,0.08)",
         },
         "range_button_active": {
-            "padding": "10px 16px",
+            "padding": "12px 16px",
+            "minHeight": "44px",
             "borderRadius": "12px",
             "border": f"1px solid {range_button_active_border}",
             "cursor": "pointer",

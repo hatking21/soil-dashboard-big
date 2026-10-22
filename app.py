@@ -69,7 +69,8 @@ def fallback_make_card_shell(plant, dark=True):
     styles = theme_styles(dark)
     return html.Div(
         id=f"card-{plant}",
-        children="Loading...",
+        children=html.Div([html.Div("Connecting to your plants", className="skeleton-title"),
+                           html.Div("Readings will appear here automatically.", className="muted")], className="plant-card loading-card"),
         style={
             **styles.get("card_shell", {}),
             "width": "100%",
@@ -240,7 +241,7 @@ def fallback_build_settings_panel(rules_dict, dark=True, health_state_data=None,
         rows.append(html.Div([html.H3(f"{FEEDS[plant]['emoji']} {plant}"),
                               html.Div(fields, className="rule-fields")], className="rule-row"))
     return html.Div([
-        build_learning_panel(),
+        html.Details([html.Summary("Teach this pot · guided setup"), build_learning_panel()], className="care-disclosure"),
         html.H2("Manual care preferences"),
         html.P("Set moisture thresholds for each plant. Values are percentages from your sensor calibration.", className="muted"),
         *rows,
@@ -466,11 +467,12 @@ def build_graph_controls(selected_plants, dark=True):
                 options=[{"label": plant, "value": plant} for plant in plant_names],
                 value=chosen,
                 inline=True,
+                className="plant-filter",
                 inputStyle={"marginRight": "6px", "marginLeft": "10px"},
                 labelStyle={"display": "inline-flex", "alignItems": "center", "marginRight": "14px", "marginBottom": "8px"},
             ),
             html.Div(
-                "Tip: hide plants here to make weekly and monthly trends easier to read.",
+                "Select one plant to see its ideal moisture band. Deselect all to clear the charts.",
                 style={"marginTop": "8px", "fontSize": "0.92rem", "color": styles.get("subtext", "#9ca3af")},
             ),
         ],
@@ -489,6 +491,7 @@ def build_shell(live_range=1):
             id={"type": "live-range-button", "value": value},
             n_clicks=0,
             style=styles["range_button_active"] if selected else styles["range_button"],
+            **{"aria-pressed": "true" if selected else "false"},
         )
 
     return html.Div(
@@ -501,31 +504,35 @@ def build_shell(live_range=1):
                 children=[
                     html.Div(
                         style=styles["header"],
-                        children=[html.Div([html.H1("Your plant collection", style={"margin": "0 0 8px 0", "fontSize": "2rem"}), html.P("A little clarity for every leaf. Moisture, temperature, and watering at a glance.", style={"margin": "0", "opacity": "0.92"})])],
+                        children=[html.Div("PLANT MONITOR / OVERVIEW", className="eyebrow"),
+                                  html.H1("Your plant collection"),
+                                  html.P("Know what needs care. Watch the rest grow.", className="header-description")],
                     ),
-                    html.Div("Notifications paused · Your ESP32 can stay unplugged. Alerts and summaries are muted." if notifications.NOTIFICATIONS_PAUSED else "Notifications active · Watching for dry plants and offline sensors.", className="notification-status", role="status"),
+                    html.Div("Notifications paused · Alerts and daily summaries are muted. Readings continue while your ESP32 is connected." if notifications.NOTIFICATIONS_PAUSED else "Notifications active · Watching for dry plants and offline sensors.", className="notification-status", role="status"),
                     html.Div(id="system-status"),
                     html.Div(id="health-panel"),
-                    html.Div(id="alert-banner"),
+                    html.Div(id="alert-banner", role="status"),
+                    html.Div([html.H2("Your plants"), html.Span("Moisture is relative to each sensor’s calibration.", className="muted")], className="section-heading"),
                     html.Div(
                         [make_card_shell(plant, dark=dark) for plant in plant_names],
                         className="plant-grid",
                     ),
+                    html.Div([html.H2("Explore trends"), html.Span("Compare readings or fine-tune plant care.", className="muted")], className="section-heading"),
                     dcc.Tabs(
                         id="view-tabs",
                         value="live",
                         children=[
-                            dcc.Tab(label="Live", value="live", style=styles["tab"], selected_style=styles["tab_selected"]),
+                            dcc.Tab(label="Recent", value="live", style=styles["tab"], selected_style=styles["tab_selected"]),
                             dcc.Tab(label="Weekly", value="weekly", style=styles["tab"], selected_style=styles["tab_selected"]),
                             dcc.Tab(label="Monthly", value="monthly", style=styles["tab"], selected_style=styles["tab_selected"]),
-                            dcc.Tab(label="Settings", value="settings", style=styles["tab"], selected_style=styles["tab_selected"]),
+                            dcc.Tab(label="Plant care", value="settings", style=styles["tab"], selected_style=styles["tab_selected"]),
                         ],
                     ),
                     html.Div(
                         id="live-range-container",
                         style={"marginTop": "16px", "display": "block"},
                         children=[
-                            html.Div("Live range", style={"marginBottom": "8px", "fontWeight": "600"}),
+                            html.Div("Time range", style={"marginBottom": "8px", "fontWeight": "600"}),
                             html.Div([range_button("1 hour", 1), range_button("6 hours", 6), range_button("24 hours", 24)], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"}),
                         ],
                     ),
@@ -562,9 +569,16 @@ def serve_layout():
 app.layout = serve_layout
 
 
-@app.callback(Output("app-shell", "children"), Input("live-range-store", "data"))
-def render_shell(live_range):
-    return build_shell(live_range or 1)
+@app.callback(
+    Output({"type": "live-range-button", "value": ALL}, "style"),
+    Output({"type": "live-range-button", "value": ALL}, "aria-pressed"),
+    Input("live-range-store", "data"),
+)
+def update_range_buttons(live_range):
+    styles = theme_styles(True)
+    selected = [value == (live_range or 1) for value in (1, 6, 24)]
+    return ([styles["range_button_active"] if active else styles["range_button"] for active in selected],
+            ["true" if active else "false" for active in selected])
 
 
 @app.callback(
@@ -773,45 +787,49 @@ def update_cards(snapshot_data, history24_data, rules_dict):
             last_update = ts.astimezone(LOCAL_TZ).strftime("%m/%d %I:%M %p") if ts else "--"
             reading_age = format_reading_age(ts)
 
-            card = html.Div(
-                [
-                    html.Div(
-                        [
-                            html.H3(f"{meta['emoji']} {plant}", style={"margin": "0", "fontSize": "1.1rem"}),
-                            recommendation_pill(rec, moisture, rules_dict[plant], dark=dark, offline=offline),
-                        ],
-                        style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "14px", "gap": "10px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Div([html.Div("Last moisture" if offline else "Moisture", style={"color": styles["subtext"], "fontSize": "0.85rem"}), html.Div(f"{moisture:.1f}% {trend if not offline else '· stale'}", style={"fontSize": "1.25rem", "fontWeight": "700"})], style={"flex": "1"}),
-                            html.Div([html.Div("Last temperature" if offline else "Temperature", style={"color": styles["subtext"], "fontSize": "0.85rem"}), html.Div(f"{min(temp_f, TEMP_F_MAX):.1f}°F", style={"fontSize": "1.25rem", "fontWeight": "700"})], style={"flex": "1"}),
-                        ],
-                        style={"display": "flex", "gap": "12px", "marginBottom": "12px"},
-                    ),
-                    build_moisture_bar(moisture, rec_color, dark=dark),
-                    html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
-                    html.Div(eta_text, style={"marginBottom": "8px", "fontSize": "0.92rem"}),
-                    html.Div(reading_age, style={"marginBottom": "8px", "fontSize": "0.92rem"}),
-                    html.Div(f"Last update: {last_update}", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
-                ],
-                style={"backgroundColor": bg_color, "border": f"2px solid {rec_color}", "borderRadius": "18px", "padding": "16px", "minHeight": "275px", "color": styles["text"], "height": "100%", "boxSizing": "border-box"},
-            )
+            display_moisture = f"{moisture:.1f}" if moisture is not None else "—"
+            display_temp = f"{min(temp_f, TEMP_F_MAX):.1f}°F" if temp_f is not None else "—"
+            trend_label = {"↑": "Rising", "↓": "Falling", "→": "Steady"}.get(trend, "Steady")
+            rule = rules_dict[plant]
+            value = max(0, min(100, moisture)) if moisture is not None else 0
+            card = html.Div([
+                html.Div([
+                    html.H3(f"{meta['emoji']} {plant}"),
+                    recommendation_pill(rec, moisture, rule, dark=dark, offline=offline),
+                ], className="plant-card-header"),
+                html.Div("Last known moisture" if offline else "Soil moisture", className="metric-label"),
+                html.Div([html.Strong(display_moisture), html.Span("%", className="reading-unit"),
+                          html.Span("Stale reading" if offline else (f"{trend} {trend_label}" if len(hist_m) >= 3 else "Gathering data"), className="trend-label")], className="primary-reading"),
+                html.Div([
+                    html.Div(style={"left": f"{rule['ideal_low']}%", "width": f"{rule['ideal_high'] - rule['ideal_low']}%"}, className="ideal-zone"),
+                    html.Div(style={"width": f"{value}%", "backgroundColor": rec_color}, className="moisture-fill"),
+                    html.Div(style={"left": f"{rule['dry']}%"}, className="dry-marker"),
+                ], className="moisture-track", role="img", **{"aria-label": f"Moisture {display_moisture} percent. Ideal {rule['ideal_low']} to {rule['ideal_high']} percent. Water at or below {rule['dry']} percent."}),
+                html.Div(f"Ideal {rule['ideal_low']}–{rule['ideal_high']}% · water ≤ {rule['dry']}%", className="target-caption"),
+                html.Div([
+                    html.Div([html.Span("Last temperature" if offline else "Temperature", className="metric-label"), html.Strong(display_temp)]),
+                    html.Div([html.Span("Watering", className="metric-label"), html.Span(format_last_watered(plant))]),
+                ], className="card-secondary"),
+                html.Div(reading_age, className="reading-age"),
+                html.Details([html.Summary("Sensor details"), html.Div([
+                    html.Div(eta_text), html.Div(f"Last update: {last_update}"),
+                    html.Div(f"Raw sensor value: {raw if raw is not None else 'Unavailable'}"),
+                ], className="sensor-details")]),
+            ], className="plant-card is-offline" if offline else "plant-card",
+                style={"--status-color": rec_color})
 
             rank = -2 if offline else (-1 if rec == "Water now" else 0)
             sort_moisture = moisture if moisture is not None else 999
             order_rank.append((rank, sort_moisture, plant, card))
         else:
-            card = html.Div(
-                [
-                    html.H3(f"{meta['emoji']} {plant}", style={"marginTop": "0"}),
-                    html.Div("Waiting for sensor", style={"fontWeight": "700", "color": styles["subtext"], "marginBottom": "10px"}),
-                    html.Div(format_last_watered(plant), style={"marginBottom": "8px", "fontSize": "0.92rem", "fontWeight": "600"}),
-                    html.Div("Connect the ESP32 to begin receiving readings.", style={"marginBottom": "8px", "fontSize": "0.92rem"}),
-                    html.Div("Last update: --", style={"fontSize": "0.92rem", "color": styles["subtext"]}),
-                ],
-                style={"backgroundColor": styles["status_bg"]["nodata"], "border": f"2px solid {styles['status_border']['nodata']}", "borderRadius": "18px", "padding": "16px", "minHeight": "275px", "color": styles["text"], "height": "100%", "boxSizing": "border-box"},
-            )
+            card = html.Div([
+                html.Div([html.H3(f"{meta['emoji']} {plant}"), html.Span("No data", className="waiting-badge")], className="plant-card-header"),
+                html.Div("Soil moisture", className="metric-label"),
+                html.Div("—", className="primary-reading"),
+                html.Div("Waiting for sensor", className="empty-title"),
+                html.P("Connect your ESP32 to power and Wi-Fi. Readings will appear automatically.", className="muted"),
+                html.Div(format_last_watered(plant), className="reading-age"),
+            ], className="plant-card is-offline", style={"--status-color": "#80928e"})
 
             order_rank.append((-3, 999, plant, card))
             offline_alerts.append(plant)
@@ -828,7 +846,7 @@ def update_cards(snapshot_data, history24_data, rules_dict):
             html.Div([html.Span("Need water", className="metric-label"), html.Strong(str(len(dry_alerts)), className="metric-value")]),
             html.Div([html.Span("Data source", className="metric-label"), html.Strong("Cached readings" if used_fallback else ("Adafruit IO" if snapshot else "Waiting for readings"), className="metric-value")]),
             html.Div([html.Span("Dashboard updated", className="metric-label"), html.Strong(datetime.now(LOCAL_TZ).strftime("%I:%M %p"), className="metric-value")]),
-        ], className="overview-grid", style={**styles["section"], "marginBottom": "16px"},
+        ], className="overview-grid", role="status", style={**styles["section"], "marginBottom": "16px"},
     )
 
     health_panel = html.Div()
@@ -891,6 +909,9 @@ def render_tab(tab, live_range, selected_plants, h1, h6, h24, h7, h30, snapshot_
     styles = theme_styles(dark)
 
     if tab == "settings":
+        # Keep in-progress form edits and feedback when background data refreshes.
+        if ctx.triggered_id not in (None, "view-tabs"):
+            return no_update
         snapshot_data = snapshot_data or {"snapshot": {}, "used_fallback": False}
         return build_settings_panel(rules_dict, dark=dark, health_state_data=health_state, used_fallback=snapshot_data.get("used_fallback", False))
 
@@ -898,18 +919,18 @@ def render_tab(tab, live_range, selected_plants, h1, h6, h24, h7, h30, snapshot_
         live_hist = {1: deserialize_histories(h1), 6: deserialize_histories(h6), 24: deserialize_histories(h24)}.get(live_range, deserialize_histories(h1))
         filtered_hist = filter_histories_by_selection(live_hist, selected_plants)
         moisture_fig, temp_fig = build_figures(filtered_hist, rules_dict, label_suffix=f"Live ({live_range}h)", dark=dark, temp_max=TEMP_F_MAX)
-        return html.Div([build_graph_controls(selected_plants, dark=dark), html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]), html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"})])
+        return html.Div([build_graph_controls(selected_plants, dark=dark), html.Div(dcc.Graph(figure=moisture_fig, config={"displaylogo": False, "scrollZoom": False, "responsive": True}), style=styles["section"]), html.Div(dcc.Graph(figure=temp_fig, config={"displaylogo": False, "scrollZoom": False, "responsive": True}), style={**styles["section"], "marginTop": "16px"})])
 
     if tab == "weekly":
         weekly_hist = deserialize_histories(h7)
         filtered_hist = filter_histories_by_selection(weekly_hist, selected_plants)
         moisture_fig, temp_fig = build_figures(filtered_hist, rules_dict, label_suffix="Weekly (days)", dark=dark, temp_max=TEMP_F_MAX)
-        return html.Div([build_graph_controls(selected_plants, dark=dark), build_summary_cards(filtered_hist, selected_plants, dark=dark), html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]), html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"})])
+        return html.Div([build_graph_controls(selected_plants, dark=dark), build_summary_cards(filtered_hist, selected_plants, dark=dark), html.Div(dcc.Graph(figure=moisture_fig, config={"displaylogo": False, "scrollZoom": False, "responsive": True}), style=styles["section"]), html.Div(dcc.Graph(figure=temp_fig, config={"displaylogo": False, "scrollZoom": False, "responsive": True}), style={**styles["section"], "marginTop": "16px"})])
 
     monthly_hist = deserialize_histories(h30)
     filtered_hist = filter_histories_by_selection(monthly_hist, selected_plants)
     moisture_fig, temp_fig = build_figures(filtered_hist, rules_dict, label_suffix="Monthly (days)", dark=dark, temp_max=TEMP_F_MAX)
-    return html.Div([build_graph_controls(selected_plants, dark=dark), build_summary_cards(filtered_hist, selected_plants, dark=dark), html.Div(dcc.Graph(figure=moisture_fig), style=styles["section"]), html.Div(dcc.Graph(figure=temp_fig), style={**styles["section"], "marginTop": "16px"})])
+    return html.Div([build_graph_controls(selected_plants, dark=dark), build_summary_cards(filtered_hist, selected_plants, dark=dark), html.Div(dcc.Graph(figure=moisture_fig, config={"displaylogo": False, "scrollZoom": False, "responsive": True}), style=styles["section"]), html.Div(dcc.Graph(figure=temp_fig, config={"displaylogo": False, "scrollZoom": False, "responsive": True}), style={**styles["section"], "marginTop": "16px"})])
 
 
 if __name__ == "__main__":
