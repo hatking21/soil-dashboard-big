@@ -44,6 +44,32 @@ class DashboardTests(unittest.TestCase):
         for plant, card in zip(app.plant_names, result):
             self.assertIn(plant, card.children[0].children[0].children)
 
+    def test_time_range_updates_controls_without_remounting_page(self):
+        _, pressed = app.update_range_buttons(6)
+        self.assertEqual(pressed, ["false", "true", "false"])
+        self.assertFalse(any("app-shell.children" in key for key in app.app.callback_map))
+        self.assertEqual(app.toggle_live_range_visibility("weekly"), {"display": "none"})
+
+    def test_background_refresh_keeps_unsaved_care_preferences(self):
+        from types import SimpleNamespace
+        with patch("app.ctx", SimpleNamespace(triggered_id="snapshot-store")):
+            result = app.render_tab("settings", 1, app.plant_names, {}, {}, {}, {}, {}, {}, DEFAULT_PLANT_RULES)
+        self.assertIs(result, app.no_update)
+
+    def test_offline_readings_keep_stale_label_and_target_context(self):
+        from datetime import timedelta
+        plant = app.plant_names[0]
+        stale = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        row = {"moisture": 18, "temp_f": 72, "raw": 100, "timestamp": stale}
+        with patch("app.monitor.load_rules", return_value=DEFAULT_PLANT_RULES):
+            result = app.update_cards({"snapshot": {plant: row}}, {}, DEFAULT_PLANT_RULES)
+        card = str(result[0])
+        self.assertIn("Stale reading", card)
+        self.assertIn("Last known moisture", card)
+        self.assertIn("Ideal 35–80%", card)
+        self.assertIn("unavailable for an offline sensor", card)
+        self.assertNotIn("Water now", card)
+
     def test_chart_colors_stable_and_bands_not_shared(self):
         t = datetime.now(timezone.utc)
         plants = app.plant_names[:2]
